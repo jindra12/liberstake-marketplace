@@ -1,15 +1,7 @@
-import { ReactComponent as FeedIcon } from '../assets/icons/feed.svg';
 import { ReactComponent as WalletIcon } from '../assets/icons/wallet.svg';
 import { ReactComponent as DocumentsIcon } from '../assets/icons/documents.svg';
-import { ReactComponent as PoliticsIcon } from '../assets/icons/politics.svg';
-import { ReactComponent as LegislationIcon } from '../assets/icons/legislation.svg';
 import { ReactComponent as CompaniesIcon } from '../assets/icons/companies.svg';
-import { ReactComponent as RegistriesIcon } from '../assets/icons/registries.svg';
-import { ReactComponent as OfficesIcon } from '../assets/icons/offices.svg';
 import { ReactComponent as StakingIcon } from '../assets/icons/staking.svg';
-import { ReactComponent as ProfileIcon } from '../assets/icons/profile-menu.svg';
-import { ReactComponent as CongressIcon } from '../assets/icons/congress.svg';
-import { ReactComponent as SenateIcon } from '../assets/icons/senate.svg';
 import { ReactComponent as LinkedIn } from '../assets/icons/linkedin.svg';
 import { ReactComponent as Meta } from '../assets/icons/meta.svg';
 import { ReactComponent as X } from '../assets/icons/x.svg';
@@ -18,13 +10,6 @@ import { ReactComponent as Telegram } from '../assets/icons/telegram.svg';
 import router from '../router';
 
 export const navigationList = [
-  {
-    route: router.home.feed,
-    title: 'Feed',
-    icon: FeedIcon,
-    isDiscouraged: process.env.REACT_APP_IS_FEED_DISCOURAGED === 'true',
-    subLinks: {},
-  },
   {
     route: router.home.wallet,
     title: 'Finances',
@@ -40,29 +25,6 @@ export const navigationList = [
     },
   },
   {
-    route: router.home.nfts,
-    title: 'NFTs',
-    icon: FeedIcon,
-    isDiscouraged: process.env.REACT_APP_IS_WALLET_DISCOURAGED === 'true',
-    subLinks: {
-      Overview: router.nfts.overview,
-      'Owned NFTs': router.nfts.ownedNfts,
-      Collections: router.nfts.collections,
-      Shop: router.nfts.shop,
-    },
-  },
-  {
-    route: router.home.voting,
-    title: 'Politics',
-    icon: PoliticsIcon,
-    isDiscouraged: process.env.REACT_APP_IS_VOTING_DISCOURAGED === 'true',
-    subLinks: {
-      'Congressional Assemble': router.voting.congressionalAssemble,
-      Referendum: router.voting.referendum,
-      'Propose legislation': router.voting.addLegislation,
-    },
-  },
-  {
     route: router.home.contracts,
     title: 'Contracts',
     icon: DocumentsIcon,
@@ -70,21 +32,6 @@ export const navigationList = [
     subLinks: {
       Overview: router.contracts.overview,
       'My contracts': router.contracts.myContracts,
-    },
-  },
-  {
-    route: router.home.legislation,
-    title: 'Legislation',
-    icon: LegislationIcon,
-    isDiscouraged: process.env.REACT_APP_IS_LEGISLATION_DISCOURAGED === 'true',
-    subLinks: {
-      Decisions: router.legislation.decisions,
-      'International treaty': router.legislation.internationalTreaty,
-      Law: router.legislation.law,
-      'Tier 3': router.legislation.tier3,
-      'Tier 4': router.legislation.tier4,
-      'Tier 5': router.legislation.tier5,
-      Constitution: router.legislation.constitution,
     },
   },
   {
@@ -108,13 +55,6 @@ export const navigationList = [
     },
   },
   {
-    route: router.home.profile,
-    title: 'Profile',
-    icon: ProfileIcon,
-    isDiscouraged: process.env.REACT_APP_IS_PROFILE_DISCOURAGED === 'true',
-    subLinks: {},
-  },
-  {
     route: router.home.staking,
     title: 'Staking',
     icon: StakingIcon,
@@ -123,63 +63,6 @@ export const navigationList = [
       Overview: router.staking.overview,
       'ETH LP Staking': router.staking.ethlpstaking,
       'SOL LP Staking': router.staking.sollpstaking,
-    },
-  },
-  {
-    route: router.home.offices,
-    title: 'Offices',
-    icon: OfficesIcon,
-    isDiscouraged: process.env.REACT_APP_IS_OFFICES_DISCOURAGED === 'true',
-    isGovt: true,
-    subLinks: {
-      'Ministry Of Finance': router.offices.ministryOfFinance,
-      Identity: router.offices.identity,
-      'Company registry': router.offices.companyRegistry.home,
-      'Land registry': router.offices.landRegistry,
-      Finances: router.offices.finances,
-      'Scheduled Congress Spending': router.offices.scheduledCongressSpending,
-      'Tax Payers': router.offices.taxPayers,
-    },
-  },
-  {
-    route: router.home.registries,
-    title: 'Registries',
-    icon: RegistriesIcon,
-    isGovt: true,
-    isDiscouraged: process.env.REACT_APP_IS_REGISTRIES_DISCOURAGED === 'true',
-    subLinks: {
-      Overview: router.registries.overview,
-      'All companies': router.registries.allCompanies,
-      Land: router.registries.land,
-      Assets: router.registries.assets,
-      Other: router.registries.other,
-    },
-  },
-  {
-    route: router.home.congress,
-    title: 'Congress',
-    icon: CongressIcon,
-    isDiscouraged: process.env.REACT_APP_IS_CONGRESS_DISCOURAGED === 'true',
-    isGovt: true,
-    subLinks: {
-      Overview: router.congress.overview,
-      Motions: router.congress.motions,
-      'Propose International treaty': router.congress.addLegislation,
-      'Propose legislation': router.congress.addLegislationViaReferendum,
-      Wallet: router.congress.wallet,
-    },
-  },
-  {
-    route: router.home.senate,
-    title: 'Senate',
-    icon: SenateIcon,
-    isDiscouraged: process.env.REACT_APP_IS_CONGRESS_DISCOURAGED === 'true',
-    isGovt: true,
-    subLinks: {
-      Overview: router.senate.overview,
-      Motions: router.senate.motions,
-      'Scheduled Congress Spending': router.senate.scheduledCongressSpending,
-      Wallet: router.senate.wallet,
     },
   },
 ];

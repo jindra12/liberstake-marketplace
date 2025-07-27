@@ -4,15 +4,14 @@ import PropTypes from 'prop-types';
 import cx from 'classnames';
 import Card from 'antd/es/card';
 import Dropdown from 'antd/es/dropdown';
+import MenuOutlined from '@ant-design/icons/MenuOutlined';
+import Image from 'antd/es/image';
 import { useHistory, useLocation } from 'react-router-dom';
 import { nftsActions } from '../../../redux/actions';
 import FillAddressWrapper from '../../Modals/FillAddress';
 import Button from '../../Button/Button';
 import styles from './styles.module.scss';
 import SetAttributeModalWrapper from '../../Modals/Nfts/SetAttribute';
-import FullImageModal from '../../Modals/Nfts/FullImage';
-import { ReactComponent as OpenNewTabIcon } from '../../../assets/icons/openNewTab.svg';
-import { ReactComponent as MenuIcon } from '../../../assets/icons/menu.svg';
 
 import { formatDollars, parseDollars } from '../../../utils/walletHelpers';
 import router from '../../../router';
@@ -144,20 +143,12 @@ function ItemNft({
               }}
             >
               <div className={cx(styles.showImage, styles.menu)}>
-                <MenuIcon className={styles.icon} />
+                <MenuOutlined className={styles.icon} />
               </div>
             </Dropdown>
           )}
-          {image && (
-            <>
-              <FullImageModal image={image} />
-              <a href={image} target="blank" className={cx(styles.showImage, styles.openNewTab)}>
-                <OpenNewTabIcon className={styles.icon} />
-              </a>
-            </>
-          )}
           {image ? (
-            <img src={image} alt={name} className={styles.image} />
+            <Image src={image} alt={name} className={styles.image} />
           ) : (
             <div className={styles.image} />
           )}
