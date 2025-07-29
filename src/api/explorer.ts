@@ -2,6 +2,7 @@ import axios from 'axios';
 import { BN } from '@polkadot/util';
 import { getAdditionalAssets } from './nodeRpcCall';
 import { isCompanyConnected } from '../utils/asset';
+import { GetIdentitiesQuery, HistoryCombinedQueryQuery } from './graphql/schemaTypes';
 
 const historyTransferQuery = `
   query CombinedQuery(
@@ -139,10 +140,10 @@ query GetIdentities($name: String!) {
 }`;
 
 const getApi = () => axios.create({
-  baseURL: process.env.REACT_APP_EXPLORER,
+  baseURL: process.env['REACT_APP_EXPLORER']!,
 });
 
-function getStakingActionText(method) {
+function getStakingActionText(method: 'Rewarded' | 'Withdrawn' | 'Bonded' | 'Slashed') {
   switch (method) {
     case 'Rewarded':
       return 'staking reward';
@@ -157,7 +158,7 @@ function getStakingActionText(method) {
   }
 }
 
-const getFilterVariable = (substrateAddress) => ({
+const getFilterVariable = (substrateAddress: string) => ({
   or: [
     {
       fromId: {
@@ -172,32 +173,32 @@ const getFilterVariable = (substrateAddress) => ({
   ],
 });
 
-const getFilterForStaking = (substrateAddress) => ({
+const getFilterForStaking = (substrateAddress: string) => ({
   userId: {
     equalTo: substrateAddress,
   },
 });
 
-const getFilterSoraMinted = (substrateAddress) => ({
+const getFilterSoraMinted = (substrateAddress: string) => ({
   recipientId: {
     equalTo: substrateAddress,
   },
 });
 
-const getFilterSoraBurned = (substrateAddress) => ({
+const getFilterSoraBurned = (substrateAddress: string) => ({
   senderId: {
     equalTo: substrateAddress,
   },
 });
 
-const getWalletTransfers = async (substrateAddress) => {
+const getWalletTransfers = async (substrateAddress: string) => {
   const filterVariable = getFilterVariable(substrateAddress);
   const stakingsFilter = getFilterForStaking(substrateAddress);
   const filterSoraMinted = getFilterSoraMinted(substrateAddress);
   const filterSoraBurned = getFilterSoraBurned(substrateAddress);
 
   const orderByVariable = ['BLOCK_NUMBER_DESC', 'EVENT_INDEX_DESC'];
-  const { data } = await getApi().post('/graphql', {
+  const { data } = await getApi().post<HistoryCombinedQueryQuery>('/graphql', {
     query: historyTransferQuery,
     variables: {
       orderByTransfers: orderByVariable,
@@ -252,7 +253,7 @@ const parseSoraTransfer = (soraMinted, soraBurned, assetsData) => {
   return [...soraMintedParsed, ...soraBurnedParsed];
 };
 
-export const getHistoryTransfers = async (substrateAddress) => {
+export const getHistoryTransfers = async (substrateAddress: string) => {
   const [
     transferData,
     assetsData,
@@ -289,12 +290,12 @@ export const getHistoryTransfers = async (substrateAddress) => {
 
 export const getUsersIdentityData = async (filterValue) => {
   const api = getApi();
-  const result = await api.post('/graphql', {
+  const result = await api.post<{ data: GetIdentitiesQuery }>('/graphql', {
     query: identitiesDataQuery,
     variables: {
       name: filterValue,
     },
   });
-  const data = result?.data?.data?.identities.nodes;
+  const data = result?.data?.data?.identities?.nodes;
   return data || null;
 };

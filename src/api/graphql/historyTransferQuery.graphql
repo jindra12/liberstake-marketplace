@@ -1,0 +1,116 @@
+  query HistoryCombinedQuery(
+    $orderByTransfers: [TransfersOrderBy!],
+    $filterTransfers: TransferFilter,
+    $orderByMerits: [MeritsOrderBy!],
+    $filterMerits: MeritFilter,
+    $orderByAssetTransfers: [AssetTransfersOrderBy!],
+    $filterAssetTransfers: AssetTransferFilter,
+    $orderByStakings: [StakingsOrderBy!],
+    $filterStakings: StakingFilter,
+    $filterSoraMinted: SoraMintedFilter,
+    $filterSoraBurned: SoraBurnedFilter,
+  
+  ) {
+    transfers(orderBy: $orderByTransfers, filter: $filterTransfers) {
+      nodes {
+        type: __typename
+        id
+        fromId
+        toId
+        value
+        extrinsicIndex
+        eventIndex
+        block {
+          id
+          number
+          timestamp
+        }
+      }
+    }
+
+    merits(orderBy: $orderByMerits, filter: $filterMerits) {
+      nodes {
+        type: __typename
+        id
+        fromId
+        toId
+        value
+        extrinsicIndex
+        eventIndex
+        block {
+          id
+          number
+          timestamp
+        }
+      }
+    }
+
+    assetTransfers(orderBy: $orderByAssetTransfers, filter: $filterAssetTransfers) {
+      nodes {
+        type: __typename
+        toId
+        fromId
+        asset
+        value
+        block {
+          id
+          number
+          timestamp
+        }
+      }
+    }
+
+    stakings(orderBy: $orderByStakings, filter: $filterStakings) {
+      nodes {
+        type: __typename
+        isPositive
+        userId
+        value
+        blockId
+        blockNumber
+        extrinsicIndex
+        method
+        block {
+          id
+          number
+          timestamp
+        }
+      }
+    }
+
+    soraMinteds(
+      filter: $filterSoraMinted
+    ) {
+      nodes {
+        id
+        sender
+        recipientId
+        value
+        asset
+        block {
+            id,
+            number,
+            timestamp,
+        }
+        extrinsicIndex
+      }
+    }
+
+    soraBurneds(
+      filter: $filterSoraBurned
+    ) {
+      nodes {
+        id
+        senderId
+        recipient
+        value
+        asset
+        block {
+            id,
+            number,
+            timestamp,
+        }
+        extrinsicIndex
+      }
+    }
+  }

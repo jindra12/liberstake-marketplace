@@ -1,6 +1,11 @@
 import { web3FromAddress } from '@polkadot/extension-dapp';
 import pako from 'pako';
+import type { Bytes, Option } from '@polkadot/types';
+import { ApiTypes, QueryableStorageMultiArg, SubmittableExtrinsic } from '@polkadot/api/types';
+import type { Codec } from '@polkadot/types/types';
+import { AssetBalance, AccountInfo, AssetDetails, Registration, Hash } from "@polkadot/types/interfaces";
 import {
+  BN,
   BN_ZERO,
   hexToU8a, u8aToHex,
 } from '@polkadot/util';
@@ -8,19 +13,18 @@ import { ApiPromise, WsProvider } from '@polkadot/api';
 import groupBy from 'lodash/groupBy';
 import { USER_ROLES, userRolesHelper } from '../utils/userRolesHelper';
 import { handleMyDispatchErrors } from '../utils/therapist';
-import * as centralizedBackend from './backend';
-// eslint-disable-next-line import/no-cycle
+import './polkadot/interfaces/augment-api';
+import './polkadot/interfaces/augment-types';
 import { convertAssetData } from '../utils/dexFormatter';
 import { parseDollars, parseMerits } from '../utils/walletHelpers';
-import { blockchainDataToFormObject, getMetadataCache, setMetadataCache } from '../utils/nodeRpcCall';
+import { BlockchainData, blockchainDataToFormObject, getMetadataCache, setMetadataCache } from '../utils/nodeRpcCall';
 import { addReturns, calcInflation, getBaseInfo } from '../utils/staking';
 import identityJudgementEnums from '../constants/identityJudgementEnums';
 import { IndexHelper } from '../utils/council/councilEnum';
 import { decodeAndFilter } from '../utils/identityParser';
-import { OfficeType } from '../utils/officeTypeEnum';
 
-const provider = new WsProvider(process.env.REACT_APP_NODE_ADDRESS);
-let __apiCache = null;
+const provider = new WsProvider(process.env['REACT_APP_NODE_ADDRESS']);
+let __apiCache: ApiPromise | null = null;
 const getApi = async () => {
   if (__apiCache === null) {
     __apiCache = await ApiPromise.create({
@@ -209,7 +213,7 @@ const getApi = async () => {
       },
     });
     setMetadataCache(
-      __apiCache.genesisHash,
+      __apiCache.genesisHash as any as Hash,
       __apiCache.runtimeVersion.specVersion.toNumber(),
       __apiCache.runtimeMetadata.toHex(),
     );
@@ -217,29 +221,10 @@ const getApi = async () => {
   return __apiCache;
 };
 
-// eslint-disable-next-line max-len
-const crossReference = (api, blockchainData, allCentralizedData, motions, isReferendum) => blockchainData.map((item) => {
-  const proposalHash = isReferendum ? item.imageHash : (
-    item.boundedCall?.lookup?.hash
-      ?? item.boundedCall?.legacy?.hash
-  );
-  const centralizedDatas = allCentralizedData.filter((cItem) => (cItem.hash === proposalHash));
-  const blacklistMotionHash = api.tx.democracy.blacklist(
-    proposalHash,
-    isReferendum ? item.index : null,
-  ).method.hash.toString();
-
-  return {
-    ...item,
-    centralizedDatas,
-    blacklistMotion: motions.includes(blacklistMotionHash) ? blacklistMotionHash : null,
-  };
-});
-
-const submitExtrinsic = async (extrinsic, walletAddress, api) => {
+const submitExtrinsic = async <T extends ApiTypes>(extrinsic: SubmittableExtrinsic<T>, walletAddress: string, api: ApiPromise) => {
   const { signer } = await web3FromAddress(walletAddress);
   return new Promise((resolve, reject) => {
-    extrinsic.signAndSend(
+    (extrinsic.signAndSend(
       walletAddress,
       { signer, withSignedTransaction: true },
       ({ status, events, dispatchError }) => {
@@ -255,7 +240,7 @@ const submitExtrinsic = async (extrinsic, walletAddress, api) => {
             });
           } else resolve({ blockHash, status, events });
         }
-      }).catch((err) => {
+      }) as Promise<any>).catch((err: unknown) => {
       // eslint-disable-next-line no-console
       console.log(err);
       reject(err);
@@ -263,10 +248,10 @@ const submitExtrinsic = async (extrinsic, walletAddress, api) => {
   });
 };
 
-const getIdentity = async (address) => {
+const getIdentity = async (address: string) => {
   try {
     const api = await getApi();
-    const identity = await api.query.identity.identityOf(address);
+    const identity = await api.query['identity']?.['identityOf']?.(address);
     return identity;
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -289,27 +274,49 @@ const createOrUpdateAsset = async ({
   isCreate,
   isStock,
   defaultValues,
+}: {
+  id: string,
+  name: string,
+  symbol: string,
+  decimals: string,
+  minBalance: string,
+  admin: string,
+  issuer: string,
+  freezer: string,
+  owner: string,
+  companyId: string,
+  isCreate: boolean,
+  isStock: boolean,
+  defaultValues: {
+    name: string;
+    symbol: string;
+    decimals: string;
+    admin: string;
+    issuer: string;
+    companyId: string;
+    freezer: string;
+  },
 }) => {
   try {
     const api = await getApi();
     if (isCreate) {
-      const create = await api.tx.assets.create(id, admin, minBalance);
+      const create = api.tx['assets']!['create']!(id, admin, minBalance);
       await submitExtrinsic(create, owner, api);
     }
     if (isStock && isCreate) {
-      const params = await api.tx.assets.setParameters(id, { eresidencyRequired: true });
+      const params = api.tx['assets']!['setParameters']!(id, { eresidencyRequired: true });
       await submitExtrinsic(params, owner, api);
     }
     if (defaultValues?.name !== name || defaultValues?.symbol !== symbol || defaultValues?.decimals !== decimals) {
-      const setMetadata = await api.tx.assets.setMetadata(id, name, symbol, decimals);
+      const setMetadata = api.tx['assets']!['setMetadata']!(id, name, symbol, decimals);
       await submitExtrinsic(setMetadata, owner, api);
     }
     if (defaultValues?.issuer !== issuer || defaultValues?.admin !== admin || defaultValues?.freezer !== freezer) {
-      const setTeam = await api.tx.assets.setTeam(id, issuer, admin, freezer);
+      const setTeam = api.tx['assets']!['setTeam']!(id, issuer, admin, freezer);
       await submitExtrinsic(setTeam, owner, api);
     }
     if (defaultValues?.companyId !== companyId) {
-      const setCompanyId = await api.tx.assets.setRelatedCompany(id, companyId);
+      const setCompanyId = api.tx['assets']!['setRelatedCompany']!(id, companyId);
       await submitExtrinsic(setCompanyId, owner, api);
     }
   } catch (e) {
@@ -324,10 +331,15 @@ const mintAsset = async ({
   beneficiary,
   amount,
   owner,
+}: {
+  id: string;
+  beneficiary: string;
+  amount: string;
+  owner: string;
 }) => {
   try {
     const api = await getApi();
-    const mint = await api.tx.assets.mint(id, beneficiary, amount);
+    const mint = api.tx['assets']!['mint']!(id, beneficiary, amount);
     await submitExtrinsic(mint, owner, api);
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -336,12 +348,12 @@ const mintAsset = async ({
   }
 };
 
-const getLlmBalances = async (addresses) => {
+const getLlmBalances = async (addresses: string[]) => {
   try {
     const api = await getApi();
-    const balances = await api.query.assets.account.multi(addresses.map((a) => [1, a]));
+    const balances = (await api.query["assets"]!["account"]!.multi(addresses.map((a) => [1, a]))) as any as Option<AssetBalance>[];
     return addresses.reduce((acc, addr, idx) => {
-      if (balances[idx].isSome) return Object.assign(acc, { [addr]: balances[idx].unwrap().balance });
+      if (balances[idx]?.isSome) return Object.assign(acc, { [addr]: balances[idx].unwrap().balance });
       return Object.assign(acc, { [addr]: 0 });
     }, {});
   } catch (e) {
@@ -351,11 +363,11 @@ const getLlmBalances = async (addresses) => {
   }
 };
 
-const getLldBalances = async (addresses) => {
+const getLldBalances = async (addresses: string[]) => {
   try {
     const api = await getApi();
-    const balances = await api.query.system.account.multi(addresses);
-    return addresses.reduce((acc, addr, idx) => Object.assign(acc, { [addr]: balances[idx].data.free }), {});
+    const balances = (await api.query['system']!['account']!.multi(addresses)) as any as AccountInfo[];
+    return addresses.reduce((acc, addr, idx) => Object.assign(acc, { [addr]: balances[idx]!.data.free }), {});
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(e);
@@ -363,10 +375,10 @@ const getLldBalances = async (addresses) => {
   }
 };
 
-const getAssetData = async (asset, address) => {
+const getAssetData = async (asset: string, address: string) => {
   try {
     const api = await getApi();
-    const maybeData = await api.query.assets.account(asset, address);
+    const maybeData = (await api.query['assets']!['account']!(asset, address)) as any as Option<AssetBalance>;
     if (maybeData.isSome) {
       const data = maybeData.unwrapOrDefault();
       return data.balance;
@@ -379,26 +391,26 @@ const getAssetData = async (asset, address) => {
   }
 };
 
-const getAssetDetails = async (ids) => {
+const getAssetDetails = async (ids: string[]) => {
   try {
     const api = await getApi();
-    const details = (await api.query.assets.asset.multi(ids)).map((asset) => asset.toJSON());
-    const assetQueries = details.reduce((queries, detail) => {
-      queries.push([api.query.identity.identityOf, detail.admin]);
-      queries.push([api.query.identity.identityOf, detail.freezer]);
-      queries.push([api.query.identity.identityOf, detail.issuer]);
-      queries.push([api.query.identity.identityOf, detail.owner]);
+    const details = (await api.query['assets']!['asset']!.multi(ids)).map((asset) => asset.toJSON() as any as Record<keyof AssetDetails, string>);
+    const assetQueries = details.reduce((queries: QueryableStorageMultiArg<"promise">[], detail) => {
+      queries.push([api.query['identity']!['identityOf']!, detail.admin]);
+      queries.push([api.query['identity']!['identityOf']!, detail.freezer]);
+      queries.push([api.query['identity']!['identityOf']!, detail.issuer]);
+      queries.push([api.query['identity']!['identityOf']!, detail.owner]);
       return queries;
     }, []);
     const assetResults = await api.queryMulti(assetQueries);
     const resolvedIdentity = assetResults.map((result) => {
-      const json = result.toJSON();
-      const raw = json?.info?.display?.raw?.slice(2);
+      const json = result.toJSON() as any as Registration;
+      const raw = json?.info?.display?.asRaw;
       if (!raw) {
         return '';
       }
-      return Buffer.from(raw, 'hex').toString('utf-8');
-    }).reduce((accumulator, item) => {
+      return new TextDecoder().decode(raw);
+    }).reduce((accumulator: string[][], item) => {
       const lastItem = accumulator[accumulator.length - 1];
       if (!lastItem) {
         accumulator.push([item]);
@@ -416,10 +428,10 @@ const getAssetDetails = async (ids) => {
         ? window.BigInt(detail.supply).toString()
         : detail.supply,
       identity: {
-        admin: resolvedIdentity[index][0] || detail.admin,
-        freezer: resolvedIdentity[index][1] || detail.freezer,
-        issuer: resolvedIdentity[index][2] || detail.issuer,
-        owner: resolvedIdentity[index][3] || detail.owner,
+        admin: resolvedIdentity[index]![0] || detail.admin,
+        freezer: resolvedIdentity[index]![1] || detail.freezer,
+        issuer: resolvedIdentity[index]![2] || detail.issuer,
+        owner: resolvedIdentity[index]![3] || detail.owner,
       },
     }));
 
@@ -431,17 +443,22 @@ const getAssetDetails = async (ids) => {
   }
 };
 
-const convertCompanyValue = (api, id, companyValue) => {
+type CompanyValue = Option<Codec & { data?: Bytes }> & { data?: Bytes };
+
+const convertCompanyValue = (api: ApiPromise, id: string, companyValue: CompanyValue) => {
   let companyData;
   try {
-    if (companyValue.isNone) companyData = { unregister: true };
-    else {
+    if (companyValue.isNone) {
+      companyData = { unregister: true };
+    } else {
       const compressed = companyValue?.isSome
         ? companyValue.unwrap().data : companyValue.data;
-      companyData = api.createType('CompanyData', pako.inflate(compressed));
+      if (compressed) {
+        companyData = api.createType('CompanyData', pako.inflate(compressed));
+      }
     }
 
-    const formObject = blockchainDataToFormObject(companyData);
+    const formObject: BlockchainData = blockchainDataToFormObject(companyData as any as Record<string, string>);
 
     const dataObject = { ...formObject, id };
     return dataObject;
@@ -454,12 +471,12 @@ const convertCompanyValue = (api, id, companyValue) => {
 
 const getOfficialRegistryEntries = async () => {
   const api = await getApi();
-  const allEntites = await api.query.companyRegistry.registries.entries(0);
-  const registeredCompanies = [];
+  const allEntites = await api.query['companyRegistry']!['registries']!.entries(0);
+  const registeredCompanies: BlockchainData[] = [];
   allEntites.forEach((companyRegistry) => {
     const [key, companyValue] = companyRegistry;
-    const entityId = key.toHuman();
-    const companyData = convertCompanyValue(api, entityId[1], companyValue);
+    const entityId = key.toHuman() as string[];
+    const companyData = convertCompanyValue(api, entityId[1]!, companyValue as any as Option<Codec>);
     if (companyData) {
       registeredCompanies.push(companyData);
     }
@@ -467,45 +484,46 @@ const getOfficialRegistryEntries = async () => {
   return registeredCompanies;
 };
 
-const getCompaniesByIds = async (ids) => {
+const getCompaniesByIds = async (ids: string[]) => {
   const api = await getApi();
-  const queries = ids.map((id) => [api.query.companyRegistry.registries, [0, id]]);
+  const queries: QueryableStorageMultiArg<"promise">[] = ids.map((id) => [api.query['companyRegistry']!['registries']!, [0, id]]);
   const resolved = await api.queryMulti(queries);
-  return resolved.map((r, i) => convertCompanyValue(api, ids[i], r)).filter(Boolean);
+  return resolved.map((r, i) => convertCompanyValue(api, ids[i]!, r as any as CompanyValue)).filter(Boolean);
 };
 
-const getAdditionalAssets = async (address, isIndexNeed = false, isLlmNeeded = false) => {
+type AdditionalAsset = Record<keyof AssetBalance, string> & { index?: number; isStock?: boolean; company?: { id?: string } };
+
+const getAdditionalAssets = async (address: string, isIndexNeed = false, isLlmNeeded = false) => {
   try {
     const api = await getApi();
-    const assetMetadatas = await api.query.assets.metadata.entries();
+    const assetMetadatas = await api.query['assets']!['metadata']!.entries();
     const processedMetadatas = assetMetadatas.map((rawEntry) => ({
-      // TODO FIXME figure out the proper types
-      index: parseInt(rawEntry[0].toHuman()[0].replace(/,/g, '')),
+      index: parseInt((rawEntry![0]!.toHuman() as string[])[0]!.replace(/,/g, '')),
       metadata: rawEntry[1].toHuman(),
     }));
-    const assets = [];
-    const assetQueries = [];
-    const parametersQueries = [];
-    const relatedCompanyQueries = [];
+    const assets: AdditionalAsset[] = [];
+    const assetQueries: QueryableStorageMultiArg<"promise">[] = [];
+    const parametersQueries: QueryableStorageMultiArg<"promise">[] = [];
+    const relatedCompanyQueries: QueryableStorageMultiArg<"promise">[] = [];
     processedMetadatas.forEach((asset) => {
       // Disregard LLM, asset of ID 1 because it has special treatment already
-      const isNotLLM = isLlmNeeded || !(asset.index === 1 || asset.index === '1');
+      const isNotLLM = isLlmNeeded || asset.index !== 1;
       if (isNotLLM) {
-        relatedCompanyQueries.push([api.query.assets.relatedCompany, [asset.index]]);
-        assetQueries.push([api.query.assets.account, [asset.index, address]]);
-        parametersQueries.push([api.query.assets.parameters, [asset.index]]);
-        assets.push(asset);
+        relatedCompanyQueries.push([api.query['assets']!['relatedCompany']!, [asset.index]]);
+        assetQueries.push([api.query['assets']!['account']!, [asset.index, address]]);
+        parametersQueries.push([api.query['assets']!['parameters']!, [asset.index]]);
+        assets.push(asset as any as Record<keyof AssetBalance, string>);
       }
     });
 
     if (relatedCompanyQueries.length !== 0) {
       const relatedCompanyResults = await api.queryMulti(relatedCompanyQueries);
-      const companies = await getCompaniesByIds(relatedCompanyResults.map((r) => r.toJSON()));
+      const companies = await getCompaniesByIds(relatedCompanyResults.map((r) => r.toJSON() as string));
       const mapped = groupBy(companies, 'id');
       relatedCompanyResults.forEach((relatedCompanyId, index) => {
-        const company = mapped[relatedCompanyId.toJSON()]?.[0];
+        const company = mapped[relatedCompanyId.toJSON() as string]?.[0];
         if (company) {
-          assets[index].company = company;
+          assets[index]!.company = company;
         }
       });
     }
@@ -514,20 +532,20 @@ const getAdditionalAssets = async (address, isIndexNeed = false, isLlmNeeded = f
       const assetResults = await api.queryMulti(assetQueries);
 
       assetResults.forEach((assetResult, index) => {
-        assets[index].balance = assetResult.toJSON() || '0';
+        assets[index]!.balance = assetResult.toJSON() as string || '0';
       });
     }
 
     if (parametersQueries.length !== 0) {
-      const parametersResults = await api.queryMulti(parametersQueries);
+      const parametersResults = (await api.queryMulti(parametersQueries)) as { eresidencyRequired?: boolean }[];
       parametersResults.forEach(({ eresidencyRequired }, index) => {
-        assets[index].isStock = eresidencyRequired?.valueOf() || false;
+        assets[index]!.isStock = eresidencyRequired?.valueOf() || false;
       });
     }
 
     if (isIndexNeed) {
-      return assets.reduce((acc, asset) => {
-        acc[asset.index] = asset;
+      return assets.reduce((acc: Record<number, AdditionalAsset>, asset) => {
+        acc[asset.index!] = asset;
         return acc;
       }, {});
     }
@@ -540,52 +558,77 @@ const getAdditionalAssets = async (address, isIndexNeed = false, isLlmNeeded = f
   }
 };
 
-const makeTransferExtrinsic = (api, trasferData) => {
+export interface TransferData { index: string, balance: string, recipient: string }
+
+const makeTransferExtrinsic = (api: ApiPromise, trasferData: TransferData) => {
   const { index, balance, recipient } = trasferData;
   let transferExtrinsic;
   if (index === IndexHelper.LLD) {
-    transferExtrinsic = api.tx.balances.transfer(recipient, balance);
+    transferExtrinsic = api.tx['balances']!['transfer']!(recipient, balance);
   } else if (index === IndexHelper.POLITIPOOL_LLM) {
-    transferExtrinsic = api.tx.llm.sendLlmToPolitipool(recipient, balance);
+    transferExtrinsic = api.tx['llm']!['sendLlmToPolitipool']!(recipient, balance);
   } else {
-    transferExtrinsic = api.tx.assets.transfer(parseInt(index), recipient, balance);
+    transferExtrinsic = api.tx['assets']!['transfer']!(parseInt(index), recipient, balance);
   }
   return transferExtrinsic;
 };
 
-const makeRemarkExtrinsic = (api, remarkInfo) => api.tx.llm.remark(remarkInfo);
+export interface RemarkInfo {
+  category: string;
+  project: string;
+  supplier: string;
+  description: string;
+  finalDestination: string;
+  amountInUSDAtDateOfPayment: BN | bigint | number;
+  date: BN | bigint | number;
+  currency: string;
+}
 
-const transferWithRemark = async (remarkInfo, transfer, walletAddress) => {
+const makeRemarkExtrinsic = (api: ApiPromise, remarkInfo: RemarkInfo) => api.tx['llm']!['remark']!(remarkInfo);
+
+const transferWithRemark = async (remarkInfo: RemarkInfo, transfer: TransferData, walletAddress: string) => {
   const api = await getApi();
   const remark = makeRemarkExtrinsic(api, remarkInfo);
   const transferExtrinsic = makeTransferExtrinsic(api, transfer);
 
   const call = [transferExtrinsic, remark];
-  const extrinsic = api.tx.utility.batch(call);
+  const extrinsic = api.tx['utility']!['batch']!(call);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
 const provideJudgementAndAssets = async ({
-  address, hash, walletAddress, merits, dollars, judgementType = identityJudgementEnums.KNOWNGOOD,
+  address,
+  hash,
+  walletAddress,
+  merits,
+  dollars,
+  judgementType = identityJudgementEnums.KNOWNGOOD,
+}: {
+  address: string;
+  hash: string;
+  walletAddress: string;
+  merits: string;
+  dollars: string;
+  judgementType: typeof identityJudgementEnums[keyof typeof identityJudgementEnums];
 }) => {
   const parsedMerits = parseMerits(merits);
   const parsedDollars = parseDollars(dollars);
   const api = await getApi();
-  const calls = [];
+  const calls: SubmittableExtrinsic<"promise">[] = [];
 
   const judgement = api.createType('IdentityJudgement', judgementType);
-  const judgementCall = api.tx.identity.provideJudgement(0, address, judgement, hash);
-  const officeJudgementCall = api.tx.identityOffice.execute(judgementCall);
+  const judgementCall = api.tx['identity']!['provideJudgement']!(0, address, judgement, hash);
+  const officeJudgementCall = api.tx['identityOffice']!['execute']!(judgementCall);
   calls.push(officeJudgementCall);
 
   if (parsedDollars?.gt(BN_ZERO)) {
-    const lldCall = api.tx.balances.transfer(address, parsedDollars.toString());
-    const officeLldCall = api.tx.identityOffice.execute(lldCall);
+    const lldCall = api.tx['balances']!['transfer']!(address, parsedDollars.toString());
+    const officeLldCall = api.tx['identityOffice']!['execute']!(lldCall);
     calls.push(officeLldCall);
   }
   if (parsedMerits?.gt(BN_ZERO)) {
-    const llmCall = api.tx.llm.sendLlmToPolitipool(address, parsedMerits.toString());
-    const officeLlmCall = api.tx.identityOffice.execute(llmCall);
+    const llmCall = api.tx['llm']!['sendLlmToPolitipool']!(address, parsedMerits.toString());
+    const officeLlmCall = api.tx['identityOffice']!['execute']!(llmCall);
     calls.push(officeLlmCall);
   }
 
@@ -803,8 +846,8 @@ const sendTransferLLM = async (recipient, amount, userWalletAddress) => {
 const stakeToPolkaBondAndExtra = async (amount, isUserHavePolkaStake, walletAddress) => {
   const api = await getApi();
   const transferExtrinsic = isUserHavePolkaStake
-    ? await api.tx.staking.bondExtra(amount)
-    : await api.tx.staking.bond(amount, 'Staked');
+    ? api.tx.staking.bondExtra(amount)
+    : api.tx.staking.bond(amount, 'Staked');
   return submitExtrinsic(transferExtrinsic, walletAddress, api);
 };
 
@@ -925,156 +968,8 @@ const getNominatorTargets = async (walletId) => {
 const setNominatorTargets = async (payload) => {
   const { newNominatorTargets, walletAddress } = payload;
   const api = await getApi();
-  const setNewTargets = await api.tx.staking.nominate(newNominatorTargets);
+  const setNewTargets = api.tx.staking.nominate(newNominatorTargets);
   return submitExtrinsic(setNewTargets, walletAddress, api);
-};
-
-const delegateDemocracy = async (delegateeAddress, walletAddress) => {
-  const api = await getApi();
-  const LLMPolitiPool = await api.query.llm.llmPolitics(walletAddress);
-  const LLMPolitiPoolData = LLMPolitiPool.toJSON();
-  const delegateExtrinsic = api.tx.democracy.delegate(delegateeAddress, 'None', LLMPolitiPoolData);
-  return submitExtrinsic(delegateExtrinsic, walletAddress, api);
-};
-
-const undelegateDemocracy = async (walletAddress) => {
-  const api = await getApi();
-  const undelegateExtrinsic = api.tx.democracy.undelegate();
-  return submitExtrinsic(undelegateExtrinsic, walletAddress, api);
-};
-
-const getDemocracyReferendums = async (address) => {
-  try {
-    const api = await getApi();
-    const [
-      proposals,
-      userVotes,
-    ] = await api.queryMulti([
-      api.query.democracy.publicProps,
-      [api.query.democracy.votingOf, address],
-    ]);
-
-    const [
-      apideriveReferendums,
-      apideriveReferendumsActive,
-      nextExternal,
-    ] = await Promise.all([ // api.queryMulti doesnt work with api.derive :(
-      api.derive.democracy.referendums(),
-      api.derive.democracy.referendumsActive(),
-      api.derive.democracy.nextExternal(),
-    ]);
-
-    const proposalData = proposals.map((proposalItem) => ({
-      index: proposalItem[0].toNumber(),
-      boundedCall: proposalItem[1].toJSON(),
-      proposer: proposalItem[2].toString(),
-    }));
-
-    const deposits = await api.query.democracy.depositOf.multi(proposalData.map(({ index }) => index));
-
-    const proposalsWithDeposits = proposalData.map((proposal, idx) => (
-      {
-        seconds: deposits[idx].toHuman()[0],
-        ...proposal,
-      }
-    ));
-
-    const motions = (await api.query.council.proposals())
-      .map((propose) => propose.toString());
-    const centralizedReferendumsData = await centralizedBackend.getReferenda();
-    const crossReferencedReferendumsData = crossReference(
-      api,
-      apideriveReferendums,
-      centralizedReferendumsData,
-      motions,
-      true,
-    );
-    const crossReferencedProposalsData = crossReference(
-      api,
-      proposalsWithDeposits,
-      centralizedReferendumsData,
-      motions,
-      false,
-    );
-
-    return {
-      proposalData,
-      apideriveReferendums,
-      crossReferencedReferendumsData,
-      crossReferencedProposalsData,
-      apideriveReferendumsActive,
-      userVotes: userVotes.toHuman(),
-      centralizedReferendumsData,
-      nextExternal,
-    };
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(e);
-    return {};
-  }
-};
-
-const voteOnReferendum = async (walletAddress, referendumIndex, voteType) => {
-  const api = await getApi();
-  const LLMPolitiPool = await api.query.llm.llmPolitics(walletAddress);
-  const LLMPolitiPoolData = LLMPolitiPool.toJSON();
-  const voteExtrinsic = api.tx.democracy.vote(referendumIndex, {
-    Standard: {
-      vote: {
-        aye: voteType === 'Aye',
-        conviction: 1,
-      },
-      balance: LLMPolitiPoolData,
-    },
-  });
-
-  return submitExtrinsic(voteExtrinsic, walletAddress, api);
-};
-
-const submitProposal = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  year,
-  index,
-  sections,
-  walletAddress,
-) => {
-  const api = await getApi();
-
-  const proposal = api.tx.liberlandLegislation.addLegislation(
-    tier,
-    { year, index },
-    sections,
-  ).method;
-  const { hash } = proposal;
-  await centralizedBackend.addReferendum({
-    link: discussionLink,
-    name: discussionName,
-    description: discussionDescription,
-    hash,
-    additionalMetadata: {},
-    proposerAddress: walletAddress,
-  });
-  const minDeposit = api.consts.democracy.minimumDeposit;
-  const proposeCall = tier === 'Constitution' ? api.tx.democracy.proposeRichOrigin : api.tx.democracy.propose;
-  const proposeTx = proposeCall({
-    Lookup: {
-      hash,
-      len: proposal.encodedLength,
-    },
-  }, minDeposit);
-
-  const existingPreimage = await api.query.preimage.preimageFor([proposal.hash, proposal.encodedLength]);
-  const extrinsic = existingPreimage.isNone
-    ? api.tx.utility.batchAll([
-      api.tx.preimage.notePreimage(proposal.toHex()),
-      proposeTx,
-    ])
-    : proposeTx;
-
-  return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
 async function getIdentityDataProper(addressesIdentityData) {
@@ -1108,205 +1003,6 @@ async function getIdentityDataProper(addressesIdentityData) {
     };
   });
 }
-
-const getCongressMembersWithIdentity = async (walletAddress) => {
-  const api = await getApi();
-  const [
-    councilMembers,
-    candidates,
-    currentCandidateVotesByUserQuery,
-    runnersUp,
-  ] = await api.queryMulti([
-    api.query.council.members,
-    api.query.elections.candidates,
-    [api.query.elections.voting, walletAddress],
-    api.query.elections.runnersUp,
-  ]);
-
-  const councilMembersList = councilMembers.map((member) => member.toString());
-  const candidatesList = candidates.map((candidate) => candidate[0].toString());
-  const currentCandidateVotesByUser = !currentCandidateVotesByUserQuery.isEmpty
-    ? currentCandidateVotesByUserQuery.votes.map((vote) => vote.toString())
-    : [];
-  const runnersUpList = runnersUp.map(([who]) => who[1].toString());
-
-  const [
-    crossReferencedCouncilMemberIdentities,
-    crossReferencedCandidateIdentities,
-    crossReferencedCurrentCandidateVotesByUser,
-    runnersUpListIdentities,
-  ] = await Promise.all([
-    getIdentityDataProper(councilMembersList),
-    getIdentityDataProper(candidatesList),
-    getIdentityDataProper(currentCandidateVotesByUser),
-    getIdentityDataProper(runnersUpList),
-  ]);
-
-  const electionsInfo = await api.derive.elections.info();
-
-  /*
-    const allVotes = useCall(api.derive.council.votes, undefined, transformVotes);
-  */
-
-  return {
-    electionsInfo,
-    runnersUp: runnersUpListIdentities,
-    currentCongressMembers: crossReferencedCouncilMemberIdentities,
-    candidates: crossReferencedCandidateIdentities,
-    currentCandidateVotesByUser: crossReferencedCurrentCandidateVotesByUser,
-  };
-};
-
-const voteForCongress = async (listofVotes, walletAddress) => {
-  const api = await getApi();
-  if (listofVotes.length < 1) {
-    const voteExtrinsic = api.tx.elections.removeVoter();
-    return submitExtrinsic(voteExtrinsic, walletAddress, api);
-  }
-  const votes = listofVotes.map((vote) => vote.rawIdentity);
-
-  const LLMPolitiPool = await api.query.llm.llmPolitics(walletAddress);
-  const LLMPolitiPoolData = LLMPolitiPool.toJSON();
-
-  const voteExtrinsic = api.tx.elections.vote(votes, LLMPolitiPoolData);
-  return submitExtrinsic(voteExtrinsic, walletAddress, api);
-};
-
-const castVetoForLegislation = async (tier, id, section, walletAddress) => {
-  const api = await getApi();
-  const vetoExtrinsic = api.tx.liberlandLegislation.submitVeto(tier, id, section);
-  return submitExtrinsic(vetoExtrinsic, walletAddress, api);
-};
-
-const revertVetoForLegislation = async (tier, id, section, walletAddress) => {
-  const api = await getApi();
-  const vetoExtrinsic = api.tx.liberlandLegislation.revertVeto(tier, id, section);
-  return submitExtrinsic(vetoExtrinsic, walletAddress, api);
-};
-
-const getLegislation = async (tier) => {
-  const api = await getApi();
-
-  const legislation = await api.query.liberlandLegislation.legislation.entries(
-    tier,
-  );
-  const legislationById = legislation.reduce(
-    (acc, part) => {
-      const [{ args: key }, content] = part;
-      const { year, index } = key[1];
-      const sectionId = key[2].toNumber();
-      if (!acc[year]) {
-        acc[year] = {};
-      }
-      if (!acc[year][index]) {
-        acc[year][index] = { id: { year, index }, vetos: [], sections: [] };
-      }
-      acc[year][index].sections[sectionId] = { vetos: [], content };
-      return acc;
-    },
-    {},
-  );
-  Object.keys(legislationById).forEach((year) => {
-    Object.keys(legislationById[year] || {}).forEach((index) => {
-      const { sections } = legislationById[year][index] || {};
-      if (sections) {
-        legislationById[year][index].sections = sections.filter(Boolean); // Make sure no "undefined" sections exist
-      }
-    });
-  });
-
-  const vetos = await api.query.liberlandLegislation.vetos.entries(tier);
-  vetos
-    .filter(([_, isVeto]) => isVeto)
-    .forEach(([key]) => {
-      // eslint-disable-next-line no-unused-vars
-      const [_, { year, index }, section, accountId] = key.args;
-      if (!legislationById[year]) legislationById[year] = {};
-      if (!legislationById[year][index]) {
-        legislationById[year][index] = {
-          id: { year, index },
-          vetos: [],
-          sections: [],
-        };
-      }
-      if (section.isSome) {
-        const sectionId = section.unwrap().toNumber();
-        if (!legislationById[year][index].sections[sectionId]) return;
-        legislationById[year][index].sections[sectionId].vetos.push(accountId);
-      } else {
-        if (!legislationById[year][index]) return;
-        legislationById[year][index].vetos.push(accountId);
-      }
-    });
-
-  const motions = (await api.query.council.proposals()).map((propose) => propose.toString());
-  const publicProps = (await api.query.democracy.publicProps())
-    .map((proposal) => {
-      if (proposal[1].isLegacy) return proposal[1].asLegacy.hash_.toString();
-      if (proposal[1].isLookup) return proposal[1].asLookup.hash_.toString();
-      return null;
-    }).filter((el) => el);
-
-  const referendums = await api.query.democracy.referendumInfoOf.entries();
-  const referendumProposals = referendums
-    .map(([_, referendum]) => {
-      const unwrapedReferendum = referendum.unwrapOr(null);
-      if (!unwrapedReferendum?.isOngoing) return null;
-      const { proposal } = unwrapedReferendum.asOngoing;
-      if (proposal.isLookup) return proposal.asLookup.hash_.toString();
-      if (proposal.isLegacy) return proposal.asLegacy.hash_.toString();
-      return null;
-    })
-    .filter((el) => el);
-
-  const legislationVersionEntries = await api.query.liberlandLegislation.legislationVersion.entries(tier);
-  const repealLegislationHashes = legislationVersionEntries.reduce(
-    (acc, [{ args: key }, witness]) => {
-      const { year, index } = key[1];
-      if (!acc[year]) acc[year] = {};
-      if (!acc[year][index]) {
-        acc[year][index] = {
-          sections: [],
-          proposalContent: api.tx.liberlandLegislation.repealLegislation(
-            tier,
-            { year, index },
-            witness,
-          ).method.hash.toString(),
-        };
-      }
-      acc[year][index].sections.push({
-        proposalContent: api.tx.liberlandLegislation.repealLegislationSection(
-          tier,
-          { year, index },
-          acc[year][index].sections.length,
-          witness,
-        ).method.hash.toString(),
-      });
-      return acc;
-    },
-    {},
-  );
-
-  Object.entries(legislationById).forEach(([year, legislations]) => {
-    Object.entries(legislations).forEach(([index, { sections }]) => {
-      /* eslint-disable max-len */
-      const mainrepealLegislationHash = repealLegislationHashes[year][index].proposalContent;
-      legislationById[year][index].repealMotion = motions.includes(mainrepealLegislationHash) ? mainrepealLegislationHash : null;
-      legislationById[year][index].repealReferendum = referendumProposals.includes(mainrepealLegislationHash) ? mainrepealLegislationHash : null;
-      legislationById[year][index].repealProposal = publicProps.includes(mainrepealLegislationHash) ? mainrepealLegislationHash : null;
-      sections.forEach((sectionData, section) => {
-        if (sectionData.content.isNone) return;
-        const repealLegislationHash = repealLegislationHashes[year][index].sections[section].proposalContent;
-        legislationById[year][index].sections[section].repealMotion = motions.includes(repealLegislationHash) ? repealLegislationHash : null;
-        legislationById[year][index].sections[section].repealReferendum = referendumProposals.includes(repealLegislationHash) ? repealLegislationHash : null;
-        legislationById[year][index].sections[section].repealProposal = publicProps.includes(repealLegislationHash) ? repealLegislationHash : null;
-      });
-      /* eslint-enable max-len */
-    });
-  });
-
-  return legislationById;
-};
 
 const getOfficialUserRegistryEntries = async (walletAddress) => {
   const api = await getApi();
@@ -1457,363 +1153,6 @@ const requestEditCompanyRegistration = async (companyData, companyId, walletAddr
     u8aToHex(compressed),
     !!registryAllowedToEdit,
   );
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const getCitizenCount = async () => {
-  try {
-    const api = await getApi();
-    const count = await api.query.llm.citizens();
-    return count.toNumber();
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(e);
-    throw e;
-  }
-};
-
-const getLandNFTMetadataJson = async (collection_id, nft_id) => {
-  const api = await getApi();
-
-  const result = await api.query.nfts.itemMetadataOf(collection_id, nft_id);
-  const rawMetadata = result.unwrap().data; // unwrap will fail if there's no metadata for this item
-  const metadataUint = api.createType('LandMetadata', rawMetadata).toJSON();
-  const metadata = {
-    ...metadataUint,
-    demarcation: metadataUint.demarcation.map((c) => ({
-      lat: c.lat / 10000000,
-      long: c.long / 10000000,
-    })),
-  };
-  return metadata;
-};
-
-const setLandNFTMetadata = async (collection_id, nft_id, metadata, walletAddress) => {
-  const injector = await web3FromAddress(walletAddress);
-  const api = await getApi();
-  /* let metadata = {
-    type: "test",
-    status: "test",
-    demarcation: [
-      { lat: 45.7723532, long: 18.8870918 },
-      { lat: 45.7721717, long: 18.8871917 },
-      { lat: 45.7723330, long: 18.8877504 },
-    ]
-  }; */
-
-  // SCALE doesn't support floats, we need to convert coords to int
-  const metadataUint = {
-    ...metadata,
-    demarcation: metadata.demarcation.map((c) => ({
-      lat: parseInt(c.lat * 10000000),
-      long: parseInt(c.long * 10000000),
-    })),
-  };
-  const polkadotJsApiObject = api.createType('LandMetadata', metadataUint);
-  const scaleEncoded = polkadotJsApiObject.toHex();
-
-  const metadataExtrinsic = api.tx.nfts.setMetadata(collection_id, nft_id, scaleEncoded);
-  const officeExtrinsic = api.tx.metaverseLandRegistryOffice.execute(metadataExtrinsic);
-  // scaleEncoded is ready to be used for setting metadata
-  // eslint-disable-next-line max-len
-  // this data will be validated and will be rejected if encoded incorrectly or data is nonsensical (not on liberland island, self-intersecting plot lines, less then 3 points)
-  officeExtrinsic.signAndSend(walletAddress, { signer: injector.signer, withSignedTransaction: true }, ({ status }) => {
-    if (status.isInBlock) {
-      // eslint-disable-next-line no-console
-      console.log(`Completed REQUEST COMPANY REGISTRATION at block hash #${status.asInBlock.toString()}`);
-    }
-  }).catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error(':( transaction EDIT METADATA failed', error);
-  });
-};
-
-const getBlockEvents = async (blockHash) => {
-  try {
-    const api = await getApi();
-    const apiAt = await api.at(blockHash);
-    return await apiAt.query.system.events();
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(e);
-    throw e;
-  }
-};
-
-const getVotesList = (voting) => {
-  const votingUnwrapped = voting.isSome ? voting.unwrap() : null;
-  if (!votingUnwrapped) return null;
-  const ayes = votingUnwrapped.ayes.map((item) => item.toString());
-  const nays = votingUnwrapped.nays.map((item) => item.toString());
-  return ayes.concat(nays);
-};
-
-const getMotions = async () => {
-  const api = await getApi();
-  const proposals = await api.query.council.proposals();
-
-  return Promise.all(
-    proposals.map(async (proposal) => {
-      const [proposalOf, voting, members] = await api.queryMulti([
-        [api.query.council.proposalOf, proposal],
-        [api.query.council.voting, proposal],
-        [api.query.council.members],
-      ]);
-
-      const votes = getVotesList(voting);
-      return {
-        proposal,
-        proposalOf,
-        voting,
-        votes,
-        membersCount: members.length,
-      };
-    }),
-  );
-};
-
-const getCongressCandidates = async () => {
-  const api = await getApi();
-  const electionsCandidates = await api.query.elections.candidates();
-  return electionsCandidates.toHuman();
-};
-
-const getCongressMembers = async () => {
-  const api = await getApi();
-  return api.query.council.members();
-};
-
-const getRunnersUp = async () => {
-  const api = await getApi();
-  return api.query.elections.runnersUp();
-};
-
-const renounceCandidacy = async (walletAddress, userStatus) => {
-  const api = await getApi();
-
-  if (userStatus === 'None') return null;
-
-  const renounce = {
-    [userStatus]: userStatus === 'Candidate'
-      ? (await api.query.elections.candidates()).length : null,
-  };
-  const renounceCandidacyTx = await api.tx.elections.renounceCandidacy(
-    renounce,
-  );
-
-  return submitExtrinsic(renounceCandidacyTx, walletAddress, api);
-};
-
-const applyForCongress = async (walletAddress) => {
-  const api = await getApi();
-  const electionsCandidates = await api.query.elections.candidates();
-  const extrinsic = api.tx.elections.submitCandidacy(electionsCandidates.length);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const voteAtMotions = async (walletAddress, proposal, index, vote) => {
-  const api = await getApi();
-  const extrinsic = api.tx.council.vote(proposal, index, vote);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const congressMajorityThreshold = async () => {
-  const api = await getApi();
-  const congressmen = await api.query.council.members();
-  return Math.trunc(congressmen.length / 2) + 1;
-};
-
-const createProposalAndVote = async (threshold, proposalContent, vote) => {
-  const api = await getApi();
-  const proposal = api.tx.council.propose(threshold, proposalContent, proposalContent.length);
-
-  const nextProposalIndex = await api.query.council.proposalCount();
-  const voteAye = api.tx.council.vote(proposalContent.method.hash, nextProposalIndex, vote);
-
-  return [proposal, voteAye];
-};
-
-const handleCreateProposalAndVote = async (threshold, proposalData, walletAddress) => {
-  const api = await getApi();
-  const [proposal, voteAye] = await createProposalAndVote(threshold, proposalData, true);
-
-  if (threshold === 1) {
-    return submitExtrinsic(proposal, walletAddress, api);
-  }
-
-  const extrinsic = api.tx.utility.batchAll([proposal, voteAye]);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const congressProposeSpend = async ({
-  walletAddress, spendProposal, remarkInfo, executionBlock,
-}) => {
-  const api = await getApi();
-
-  const threshold = await congressMajorityThreshold();
-  const remark = api.tx.llm.remark(remarkInfo);
-  const transferAndRemark = api.tx.utility.batchAll([spendProposal, remark]);
-
-  const executeProposal = api.tx.scheduler.schedule(executionBlock, null, 0, transferAndRemark);
-  const proposal = api.tx.councilAccount.execute(executeProposal);
-
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const createSenateProposalAndVote = async (threshold, proposalContent, vote) => {
-  const api = await getApi();
-  const proposal = api.tx.senate.propose(threshold, proposalContent, proposalContent.length);
-  const nextProposalIndex = await api.query.senate.proposalCount();
-  const voteAye = api.tx.senate.vote(proposalContent.method.hash, nextProposalIndex, vote);
-
-  return [proposal, voteAye];
-};
-
-const senateMajorityThreshold = async () => {
-  const api = await getApi();
-  const senateMember = await api.query.senate.members();
-  return Math.trunc(senateMember.length / 2) + 1;
-};
-
-const senateProposeSpend = async ({
-  walletAddress, spendProposal, remarkInfo,
-}) => {
-  const api = await getApi();
-
-  const remark = api.tx.llm.remark(remarkInfo);
-  const transferAndRemark = api.tx.utility.batchAll([spendProposal, remark]);
-  const proposalData = api.tx.senateAccount.execute(transferAndRemark);
-  const threshold = await senateMajorityThreshold();
-  const [proposal, voteAye] = await createSenateProposalAndVote(threshold, proposalData, true);
-
-  if (threshold === 1) {
-    return submitExtrinsic(proposal, walletAddress, api);
-  }
-
-  const extrinsic = api.tx.utility.batchAll([proposal, voteAye]);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const getClerksMinistryFinance = async () => {
-  const api = await getApi();
-  const keys = await api.query.ministryOfFinanceOffice.clerks.keys();
-  if (keys.length < 1) {
-    return null;
-  }
-  return keys.map((item) => item.args.toString());
-};
-
-const ministryFinanceSpend = async ({
-  walletAddress, spendProposal, remarkInfo,
-}) => {
-  const api = await getApi();
-
-  const remark = api.tx.llm.remark(remarkInfo);
-  const transferAndRemark = api.tx.utility.batchAll([spendProposal, remark]);
-  const extrinsic = api.tx.ministryOfFinanceOffice.execute(transferAndRemark);
-
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const getProperProposal = async (officeType) => {
-  if (officeType === OfficeType.CONGRESS) {
-    return congressProposeSpend;
-  } if (officeType === OfficeType.SENATE) {
-    return senateProposeSpend;
-  } if (officeType === OfficeType.MINISTRY_FINANCE) {
-    return ministryFinanceSpend;
-  }
-  return null;
-};
-
-const congressSenateSendLlm = async ({
-  walletAddress, transferToAddress, transferAmount, remarkInfo, executionBlock, officeType,
-}) => {
-  const api = await getApi();
-  const spendProposal = api.tx.llm.sendLlm(transferToAddress, transferAmount);
-  const proposeSend = await getProperProposal(officeType);
-
-  return proposeSend({
-    walletAddress, spendProposal, remarkInfo, executionBlock,
-  });
-};
-
-const congressSenateSendLld = async ({
-  walletAddress, transferToAddress, transferAmount, remarkInfo, executionBlock, officeType,
-}) => {
-  const api = await getApi();
-  const spendProposal = api.tx.balances.transfer(transferToAddress, transferAmount);
-  const proposeSend = await getProperProposal(officeType);
-
-  return proposeSend({
-    walletAddress, spendProposal, remarkInfo, executionBlock,
-  });
-};
-
-const congressSenateSendLlmToPolitipool = async ({
-  walletAddress, transferToAddress, transferAmount, remarkInfo, executionBlock, officeType,
-}) => {
-  const api = await getApi();
-  const spendProposal = api.tx.llm.sendLlmToPolitipool(transferToAddress, transferAmount);
-  const proposeSend = await getProperProposal(officeType);
-
-  return proposeSend({
-    walletAddress, spendProposal, remarkInfo, executionBlock,
-  });
-};
-
-const congressSenateSendAssets = async ({
-  walletAddress,
-  transferToAddress,
-  transferAmount,
-  assetData,
-  remarkInfo,
-  executionBlock,
-  officeType,
-}) => {
-  const api = await getApi();
-  const spendProposal = api.tx.assets.transfer(parseInt(assetData.index), transferToAddress, transferAmount);
-  const proposeSend = await getProperProposal(officeType);
-
-  return proposeSend({
-    walletAddress, spendProposal, remarkInfo, executionBlock,
-  });
-};
-const congressProposeBudget = async ({
-  walletAddress, itemsCouncilPropose, executionBlock,
-}) => {
-  const api = await getApi();
-  const proposeBudget = itemsCouncilPropose.map((itemCouncilPropose) => {
-    const { transfer, remark: remarkInfo } = itemCouncilPropose;
-    const { index, balance, recipient } = transfer;
-
-    const remark = api.tx.llm.remark(remarkInfo);
-    let transferProposal;
-
-    if (index === IndexHelper.LLD) {
-      transferProposal = api.tx.balances.transfer(recipient, balance);
-    } else if (index === IndexHelper.POLITIPOOL_LLM) {
-      transferProposal = api.tx.llm.sendLlmToPolitipool(recipient, balance);
-    } else {
-      transferProposal = api.tx.assets.transfer(parseInt(index), recipient, balance);
-    }
-
-    return { transferProposal, remark };
-  });
-  const threshold = await congressMajorityThreshold();
-  const transferAndRemark = api.tx.utility
-    .batchAll(proposeBudget.flatMap((item) => [item.transferProposal, item.remark]));
-  const executeProposal = api.tx.scheduler.schedule(executionBlock, null, 0, transferAndRemark);
-  const proposal = api.tx.councilAccount.execute(executeProposal);
-
-  const extrinsics = await createProposalAndVote(threshold, proposal, true);
-  const extrinsic = api.tx.utility.batchAll(extrinsics);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const senateVoteAtMotions = async (walletAddress, proposal, index, vote) => {
-  const api = await getApi();
-  const extrinsic = api.tx.senate.vote(proposal, index, vote);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
@@ -2040,329 +1379,6 @@ const getStakingBondingDuration = async () => {
   return api.consts.staking.bondingDuration;
 };
 
-const congressProposeLegislation = async (tier, id, sections, walletAddress) => {
-  const api = await getApi();
-  const threshold = await congressMajorityThreshold();
-  const proposal = api.tx.liberlandLegislation.addLegislation(tier, id, sections);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const congressRepealLegislation = async (tier, id, section, walletAddress) => {
-  const api = await getApi();
-
-  const threshold = await congressMajorityThreshold();
-
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const proposal = section !== null
-    ? api.tx.liberlandLegislation.repealLegislationSection(tier, id, section, witness)
-    : api.tx.liberlandLegislation.repealLegislation(tier, id, witness);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const getTreasurySpendProposals = async () => {
-  const api = await getApi();
-  return api.derive.treasury.proposals();
-};
-
-const getTreasurySpendPeriod = async () => {
-  const api = await getApi();
-  return api.consts.treasury.spendPeriod;
-};
-
-const getTreasuryBudget = async () => {
-  const api = await getApi();
-  const account = '5EYCAe5ijiYfyeZ2JJCGq56LmPyNRAKzpG4QkoQkkQNB5e6Z';
-  const balances = await api.derive.balances.account(account);
-  return balances.freeBalance;
-};
-
-const congressApproveTreasurySpend = async (proposalId, walletAddress) => {
-  const api = await getApi();
-  const threshold = await congressMajorityThreshold();
-  const proposal = api.tx.treasury.approveProposal(proposalId);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const congressUnapproveTreasurySpend = async (proposalId, walletAddress) => {
-  const api = await getApi();
-  const threshold = await congressMajorityThreshold();
-  const proposal = api.tx.treasury.removeApproval(proposalId);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const closeCongressMotion = async (proposalHash, index, walletAddress) => {
-  const api = await getApi();
-  const proposal = await api.query.council.proposalOf(proposalHash);
-  const { weight: weightBound } = await api.tx(proposal.unwrap()).paymentInfo(walletAddress);
-  const lengthBound = proposal.unwrap().toU8a().length;
-  return submitExtrinsic(api.tx.council.close(proposalHash, index, weightBound, lengthBound), walletAddress, api);
-};
-
-const congressProposeReferendum = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  referendumProposal,
-  fastTrack,
-  votingPeriod,
-  enactmentPeriod,
-  walletAddress,
-) => {
-  const api = await getApi();
-
-  await centralizedBackend.addReferendum({
-    link: discussionLink,
-    name: discussionName,
-    description: discussionDescription,
-    hash: referendumProposal.hash,
-    additionalMetadata: {},
-    proposerAddress: walletAddress,
-  });
-
-  const lookup = {
-    Lookup: {
-      hash_: referendumProposal.hash,
-      len: referendumProposal.encodedLength,
-    },
-  };
-  const proposalData = fastTrack
-    ? api.tx.utility.batchAll([
-      api.tx.democracy.externalPropose(lookup),
-      api.tx.democracy.fastTrack(
-        referendumProposal.hash,
-        votingPeriod,
-        enactmentPeriod,
-      ),
-    ])
-    : api.tx.democracy.externalProposeMajority(lookup);
-
-  const threshold = await congressMajorityThreshold();
-
-  const [proposal, voteAye] = await createProposalAndVote(threshold, proposalData, true);
-
-  const proposeAndVote = threshold === 1 ? [proposal] : [proposal, voteAye];
-  // eslint-disable-next-line max-len
-  const existingPreimage = await api.query.preimage.preimageFor([referendumProposal.hash, referendumProposal.encodedLength]);
-  const extrinsic = api.tx.utility.batchAll(
-    existingPreimage.isNone
-      ? [
-        api.tx.preimage.notePreimage(referendumProposal.toHex()),
-        ...proposeAndVote,
-      ]
-      : proposeAndVote,
-  );
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const congressProposeLegislationViaReferendum = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  id,
-  sections,
-  fastTrack,
-  votingPeriod,
-  enactmentPeriod,
-  walletAddress,
-) => {
-  const api = await getApi();
-  const addLegislation = api.tx.liberlandLegislation.addLegislation(tier, id, sections).method;
-  return congressProposeReferendum(
-    discussionName,
-    discussionDescription,
-    discussionLink,
-    addLegislation,
-    fastTrack,
-    votingPeriod,
-    enactmentPeriod,
-    walletAddress,
-  );
-};
-
-const congressProposeRepealLegislation = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  id,
-  section,
-  fastTrack,
-  votingPeriod,
-  enactmentPeriod,
-  walletAddress,
-) => {
-  const api = await getApi();
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const repealLegislation = section !== null
-    ? api.tx.liberlandLegislation.repealLegislationSection(tier, id, section, witness).method
-    : api.tx.liberlandLegislation.repealLegislation(tier, id, witness).method;
-  return congressProposeReferendum(
-    discussionName,
-    discussionDescription,
-    discussionLink,
-    repealLegislation,
-    fastTrack,
-    votingPeriod,
-    enactmentPeriod,
-    walletAddress,
-  );
-};
-
-const citizenProposeRepealLegislation = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  id,
-  section,
-  walletAddress,
-) => {
-  const api = await getApi();
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const repealLegislation = section !== null
-    ? api.tx.liberlandLegislation.repealLegislationSection(tier, id, section, witness).method
-    : api.tx.liberlandLegislation.repealLegislation(tier, id, witness).method;
-
-  await centralizedBackend.addReferendum({
-    link: discussionLink,
-    name: discussionName,
-    description: discussionDescription,
-    hash: repealLegislation.hash,
-    additionalMetadata: {},
-    proposerAddress: walletAddress,
-  });
-
-  const minDeposit = api.consts.democracy.minimumDeposit;
-  const proposeCall = tier === 'Constitution' ? api.tx.democracy.proposeRichOrigin : api.tx.democracy.propose;
-  const proposeTx = proposeCall({
-    Lookup: {
-      hash_: repealLegislation.hash,
-      len: repealLegislation.encodedLength,
-    },
-  }, minDeposit);
-
-  // eslint-disable-next-line max-len
-  const existingPreimage = await api.query.preimage.preimageFor([repealLegislation.hash, repealLegislation.encodedLength]);
-  const extrinsic = existingPreimage.isNone
-    ? api.tx.utility.batchAll([
-      api.tx.preimage.notePreimage(repealLegislation.toHex()),
-      proposeTx,
-    ])
-    : proposeTx;
-
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const congressSendTreasuryLld = async (transferToAddress, transferAmount, walletAddress) => {
-  const api = await getApi();
-
-  const threshold = await congressMajorityThreshold();
-  const proposal = api.tx.treasury.spend(transferAmount, transferToAddress);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const getPalletIds = async () => {
-  const api = await getApi();
-  // eslint-disable-next-line max-len
-  const pallets = Object.entries(api.consts).map(([palletName, palletConsts]) => ({ palletName, palletId: palletConsts.palletId }));
-  return pallets.filter((pallet) => pallet.palletId);
-};
-
-const congressDemocracyBlacklist = async (proposalHash, referendumIndex, walletAddress) => {
-  const api = await getApi();
-
-  const threshold = await congressMajorityThreshold();
-  const proposal = api.tx.democracy.blacklist(proposalHash, referendumIndex ?? null);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const proposeAmendLegislation = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  id,
-  section,
-  content,
-  walletAddress,
-) => {
-  const api = await getApi();
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const proposal = api.tx.liberlandLegislation.amendLegislation(
-    tier,
-    id,
-    section,
-    content,
-    witness,
-  ).method;
-  await centralizedBackend.addReferendum({
-    link: discussionLink,
-    name: discussionName,
-    description: discussionDescription,
-    hash: proposal.hash,
-    additionalMetadata: {},
-    proposerAddress: walletAddress,
-  });
-  const notePreimageTx = api.tx.preimage.notePreimage(proposal.toHex());
-  const minDeposit = api.consts.democracy.minimumDeposit;
-  const proposeCall = tier === 'Constitution' ? api.tx.democracy.proposeRichOrigin : api.tx.democracy.propose;
-  const proposeTx = proposeCall({
-    Lookup: {
-      hash: proposal.hash,
-      len: proposal.encodedLength,
-    },
-  }, minDeposit);
-  const existingPreimage = await api.query.preimage.preimageFor([proposal.hash, proposal.encodedLength]);
-  const extrinsic = existingPreimage.isNone
-    ? api.tx.utility.batchAll([notePreimageTx, proposeTx])
-    : proposeTx;
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const congressAmendLegislation = async (tier, id, section, content, walletAddress) => {
-  const api = await getApi();
-  const threshold = await congressMajorityThreshold();
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const proposal = api.tx.liberlandLegislation.amendLegislation(tier, id, section, content, witness);
-  return handleCreateProposalAndVote(threshold, proposal, walletAddress);
-};
-
-const congressAmendLegislationViaReferendum = async (
-  discussionName,
-  discussionDescription,
-  discussionLink,
-  tier,
-  id,
-  section,
-  content,
-  fastTrack,
-  votingPeriod,
-  enactmentPeriod,
-  walletAddress,
-) => {
-  const api = await getApi();
-
-  const witness = await api.query.liberlandLegislation.legislationVersion(tier, id, section);
-  const amendLegislation = api.tx.liberlandLegislation.amendLegislation(
-    tier,
-    id,
-    section,
-    content,
-    witness,
-  ).method;
-  return congressProposeReferendum(
-    discussionName,
-    discussionDescription,
-    discussionLink,
-    amendLegislation,
-    fastTrack,
-    votingPeriod,
-    enactmentPeriod,
-    walletAddress,
-  );
-};
-
 const fetchPreimageLen = async (hash) => {
   const api = await getApi();
   const keys = await api.query.preimage.preimageFor.keys();
@@ -2384,75 +1400,8 @@ const decodeCall = async (bytes) => {
 const getPreImage = async (preimageId, len) => {
   const api = await getApi();
   const preimageRaw = await api.query.preimage.preimageFor([preimageId, len]);
-  const preimage = preimageRaw.isSome ? await api.createType('Call', preimageRaw.unwrap()) : null;
+  const preimage = preimageRaw.isSome ? api.createType('Call', preimageRaw.unwrap()) : null;
   return preimage;
-};
-
-const getSectionType = (origin) => {
-  if (origin?.isSystem && origin.asSystem.isSigned) {
-    return 'congress';
-  }
-  if ((origin?.isSystem && origin.asSystem.isRoot) || (origin?.isDemocracy && origin.asDemocracy.isReferendum)) {
-    return 'democracy';
-  }
-  return null;
-};
-
-const getScheduledCalls = async () => {
-  const api = await getApi();
-  const agendaEntries = await api.query.scheduler.agenda.entries();
-  const agendaItems = agendaEntries
-    .flatMap(([key, calls]) => calls
-      .map((call, idx) => ({
-        blockNumber: key.args[0],
-        idx,
-        call,
-      }))
-      .filter((item) => item.call.isSome)
-      .map((item) => {
-        const call = item.call.unwrap();
-        const sectionType = getSectionType(call.origin);
-
-        return {
-          ...item,
-          call,
-          sectionType,
-        };
-      }));
-
-  const lookupItems = agendaItems.filter((item) => item.call.call.isLookup
-      && item.call.maybePeriodic.isNone);
-  // we're interested only in referendum results, so nonperiodic
-  // we only want do download small preimages. fetching multi-megabyte setCode could be painful.
-  const bigAgendaItems = lookupItems.filter((item) => item.call.call.asLookup.len > 10240);
-  const smallAgendaItems = lookupItems.filter((item) => item.call.call.asLookup.len <= 10240);
-
-  const preimageIds = smallAgendaItems.map((item) => ([item.call.call.asLookup.hash_, item.call.call.asLookup.len]));
-  const preimagesRaw = await api.query.preimage.preimageFor.multi(preimageIds);
-  const preimages = preimagesRaw.map((raw) => (raw.isSome ? api.createType('Call', raw.unwrap()) : null));
-
-  const lookupItemsData = [
-    ...bigAgendaItems.map((item) => ({
-      ...item,
-      preimage: null,
-      needCallPreImage: true,
-    })),
-    ...smallAgendaItems.map((item, idx) => ({
-      ...item,
-      preimage: preimages[idx],
-    })),
-  ];
-
-  const inlineItems = agendaItems
-    .filter((item) => item.call.call.isInline && item.call.maybePeriodic.isNone)
-    .map((item) => {
-      const { call } = item;
-      return {
-        ...item,
-        proposal: api.createType('Call', call.call.asInline),
-      };
-    });
-  return [...lookupItemsData, ...inlineItems];
 };
 
 const requestUnregisterCompanyRegistration = async (companyId, walletAddress) => {
@@ -2657,7 +1606,7 @@ const addLiquidity = async (
 
 const getLiquidityWithdrawalFee = async () => {
   const api = await getApi();
-  const maybeLiquidityWithdrawalFee = await api.consts.assetConversion.liquidityWithdrawalFee;
+  const maybeLiquidityWithdrawalFee = api.consts.assetConversion.liquidityWithdrawalFee;
   return Number(maybeLiquidityWithdrawalFee);
 };
 
@@ -2822,85 +1771,6 @@ const getStakingData = async (walletAddress) => {
   ]);
 
   return { stakingInfo, sessionProgress };
-};
-
-const getSenateMotions = async () => {
-  const api = await getApi();
-  const proposals = await api.query.senate.proposals();
-
-  return Promise.all(
-    proposals.map(async (proposal) => {
-      const [proposalOf, voting, members] = await api.queryMulti([
-        [api.query.senate.proposalOf, proposal],
-        [api.query.senate.voting, proposal],
-        [api.query.senate.members],
-      ]);
-      const votes = getVotesList(voting);
-
-      const senateProposalHash = proposalOf.hash.toHex();
-      return {
-        proposal,
-        proposalOf,
-        voting,
-        votes,
-        hash: senateProposalHash,
-        membersCount: members.length,
-      };
-    }),
-  ).then((motions) => motions.filter(Boolean));
-};
-
-const matchScheduledWithSenateMotions = async () => {
-  const [senateMotions, sheduledMotions] = await Promise.all([getSenateMotions(), getScheduledCalls()]);
-
-  const motions = senateMotions.map((motion) => {
-    const { proposalOf } = motion;
-
-    const unwrappedProposalOf = proposalOf.unwrap();
-    if (unwrappedProposalOf.method === 'cancel' && unwrappedProposalOf.section === 'scheduler') {
-      const blockNumber = proposalOf.value.args[0].toString();
-      const matchingScheduledCall = sheduledMotions.find(
-        (scheduled) => scheduled.blockNumber.toString() === blockNumber,
-      );
-      if (!matchingScheduledCall) {
-        return { ...motion, proposalOf: unwrappedProposalOf };
-      }
-      const proposalData = { method: unwrappedProposalOf.method, section: unwrappedProposalOf.section };
-      const proposalWithDetails = {
-        ...proposalData, args: matchingScheduledCall?.preimage || matchingScheduledCall?.proposal,
-      };
-      return { ...motion, proposalOf: proposalWithDetails };
-    }
-    return { ...motion, proposalOf: unwrappedProposalOf };
-  });
-  return motions;
-};
-
-const getSenateMembers = async () => {
-  const api = await getApi();
-  return api.query.senate.members();
-};
-
-const senateProposeCancel = async (walletAddress, idx, executionBlock) => {
-  const api = await getApi();
-  const threshold = await senateMajorityThreshold();
-  const executeProposal = api.tx.scheduler.cancel(executionBlock, idx);
-  const [proposal, voteAye] = await createSenateProposalAndVote(threshold, executeProposal, true);
-
-  if (threshold === 1) {
-    return submitExtrinsic(proposal, walletAddress, api);
-  }
-
-  const extrinsic = api.tx.utility.batchAll([proposal, voteAye]);
-  return submitExtrinsic(extrinsic, walletAddress, api);
-};
-
-const closeSenateMotion = async (proposalHash, index, walletAddress) => {
-  const api = await getApi();
-  const proposal = await api.query.senate.proposalOf(proposalHash);
-  const { weight: weightBound } = await api.tx(proposal.unwrap()).paymentInfo(walletAddress);
-  const lengthBound = proposal.unwrap().toU8a().length;
-  return submitExtrinsic(api.tx.senate.close(proposalHash, index, weightBound, lengthBound), walletAddress, api);
 };
 
 const encodeRemarkUser = async (dataToEncode) => {
@@ -3154,14 +2024,6 @@ export {
   getValidators,
   getNominatorTargets,
   setNominatorTargets,
-  getDemocracyReferendums,
-  voteOnReferendum,
-  submitProposal,
-  getCongressMembersWithIdentity,
-  voteForCongress,
-  getLegislation,
-  castVetoForLegislation,
-  revertVetoForLegislation,
   getIdentity,
   provideJudgementAndAssets,
   getCompanyRequest,
@@ -3171,12 +2033,6 @@ export {
   setIdentity,
   requestCompanyRegistration,
   unpool,
-  delegateDemocracy,
-  undelegateDemocracy,
-  getCitizenCount,
-  getLandNFTMetadataJson,
-  setLandNFTMetadata,
-  getBlockEvents,
   getLlmBalances,
   getLldBalances,
   getAdditionalAssets,
@@ -3193,42 +2049,17 @@ export {
   getStakingPayee,
   setStakingPayee,
   getIdentities,
-  applyForCongress,
-  getCongressCandidates,
   stakingValidate,
   stakingChill,
   bondAndValidate,
   stakingBond,
   stakingBondExtra,
-  getMotions,
-  voteAtMotions,
   stakingUnbond,
   stakingWithdrawUnbonded,
   subscribeActiveEra,
   getStakingBondingDuration,
-  getCongressMembers,
-  renounceCandidacy,
-  getRunnersUp,
-  congressProposeLegislation,
-  congressRepealLegislation,
-  getTreasurySpendProposals,
-  congressApproveTreasurySpend,
-  congressUnapproveTreasurySpend,
-  getTreasurySpendPeriod,
-  getTreasuryBudget,
-  closeCongressMotion,
-  congressProposeLegislationViaReferendum,
-  congressProposeRepealLegislation,
-  congressSendTreasuryLld,
-  getPalletIds,
-  congressDemocracyBlacklist,
-  proposeAmendLegislation,
-  congressAmendLegislation,
-  congressAmendLegislationViaReferendum,
   fetchPreimage,
   decodeCall,
-  getScheduledCalls,
-  citizenProposeRepealLegislation,
   requestEditCompanyRegistration,
   unregisterCompany,
   cancelCompanyRequest,
@@ -3260,17 +2091,7 @@ export {
   createContract,
   getSignaturesForContracts,
   getStakingData,
-  congressSenateSendLlm,
-  congressSenateSendLld,
-  congressSenateSendLlmToPolitipool,
-  congressSenateSendAssets,
-  getSenateMotions,
-  getSenateMembers,
-  senateVoteAtMotions,
-  closeSenateMotion,
-  senateProposeCancel,
   getPreImage,
-  congressProposeBudget,
   encodeRemark,
   decodeRemark,
   getUserNfts,
@@ -3284,14 +2105,12 @@ export {
   transferNFT,
   getAllNfts,
   getUserCollection,
-  matchScheduledWithSenateMotions,
   createNewPool,
   getAssetDetails,
   createOrUpdateAsset,
   mintAsset,
   transferWithRemark,
   encodeRemarkUser,
-  getClerksMinistryFinance,
   updateValidate,
   getValidator,
 };

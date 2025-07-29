@@ -6,10 +6,10 @@ import {
   sendTransaction,
   waitForReceipt,
 } from 'thirdweb';
-import { getAllWalletsList, injectedProvider } from 'thirdweb/wallets';
+import { getAllWalletsList, injectedProvider, WalletId } from 'thirdweb/wallets';
 import { ethers5Adapter } from 'thirdweb/adapters/ethers5';
 import { defineChain } from 'thirdweb/chains';
-import { providers, Signer, Web } from 'ethers';
+import { providers, Signer } from 'ethers';
 import { sqrt } from 'extra-bigint';
 import { resolveMappedPromises } from '../utils/promise';
 
@@ -42,7 +42,7 @@ const getThirdWebContract = (contractAddress: string) => {
   };
 };
 
-const resolveOperationFactory = (contractAddress: string, account: Signer) => async (methodName: string, params: ReadonlyArray<string | bigint> = [], wei: bigint = 0n) => {
+const resolveOperationFactory = (contractAddress: string, account: Signer) => async (methodName: string, params: ReadonlyArray<string | bigint | number> = [], wei: bigint = 0n) => {
   const { contract, client, chain } = getThirdWebContract(contractAddress);
 
   const defaultParams = {
@@ -175,11 +175,11 @@ const tryGetPairAndBalance = async (account: Signer) => {
       erc20Address: pair,
       account: await account.getAddress(),
     });
-    return [pair, balance];
+    return [pair, balance] as const;
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(e);
-    return [false, 0];
+    return [false, 0] as const;
   }
 };
 
@@ -196,7 +196,7 @@ const stakeLPWithEth = async ({
   ethAmountMin: bigint,
   tokenAmount: bigint,
   tokenAmountMin: bigint,
-  provider: providers.BaseProvider,
+  provider: providers.Web3Provider,
 }) => {
   await erc20Approve(
     process.env['REACT_APP_THIRD_WEB_LLD_ADDRESS']!,
@@ -205,7 +205,7 @@ const stakeLPWithEth = async ({
     tokenAmount,
   );
   const resolveOperation = resolveOperationFactory(process.env['REACT_APP_THIRD_WEB_UNISWAP_ROUTER_ADDRESS']!, account);
-  const { timestamp } = await provider.getBlock();
+  const { timestamp } = await provider.getBlock("latest");
   const dateFromTimestamp = new Date(timestamp * 1000);
   dateFromTimestamp.setMinutes(dateFromTimestamp.getMinutes() + 20);
   const deadline = dateFromTimestamp.getTime() / 1000;
@@ -224,24 +224,27 @@ const stakeLPWithEth = async ({
     ethAmount,
   );
   const [pair, balance1] = await tryGetPairAndBalance(account);
+  if (!pair) {
+    throw new Error('Unable to find pair');
+  }
   const liquidity = window.BigInt(balance1) - window.BigInt(balance);
   await stakeTokens({ account, erc20Address: pair, tokens: liquidity });
 
   return liquidity;
 };
 
-const claimRewards = async ({ account }) => {
-  const resolveOperation = resolveOperationFactory(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS'], account);
+const claimRewards = async ({ account }: { account: Signer }) => {
+  const resolveOperation = resolveOperationFactory(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']!, account);
   await resolveOperation('function claimRewards()');
 };
 
-const withdrawTokens = async ({ account, amount }) => {
-  const resolveOperation = resolveOperationFactory(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS'], account);
+const withdrawTokens = async ({ account, amount }: { account: Signer, amount: bigint }) => {
+  const resolveOperation = resolveOperationFactory(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']!, account);
   await resolveOperation('function withdraw(uint256 _amount)', [amount]);
 };
 
-const getTokenStakeAddressInfo = async ({ userEthAddress }) => {
-  const { contract } = getThirdWebContract(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']);
+const getTokenStakeAddressInfo = async ({ userEthAddress }: { userEthAddress: string }) => {
+  const { contract } = getThirdWebContract(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']!);
 
   return {
     stake: await readContract({
@@ -252,7 +255,7 @@ const getTokenStakeAddressInfo = async ({ userEthAddress }) => {
   };
 };
 
-const getERC20Info = async ({ erc20Address }) => {
+const getERC20Info = async ({ erc20Address }: { erc20Address: string }) => {
   const { contract } = getThirdWebContract(erc20Address);
   const name = readContract({
     contract,
@@ -281,7 +284,7 @@ const getERC20Info = async ({ erc20Address }) => {
 };
 
 const getTokenStakeContractInfo = async () => {
-  const { contract } = getThirdWebContract(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']);
+  const { contract } = getThirdWebContract(process.env['REACT_APP_THIRD_WEB_CONTRACT_ADDRESS']!);
 
   const getRewardRatio = readContract({
     contract,
@@ -347,7 +350,7 @@ const getTokenStakeContractInfo = async () => {
   return resolved;
 };
 
-const connectWallet = async ({ walletId }) => {
+const connectWallet = async ({ walletId }: { walletId: WalletId }) => {
   try {
     const injected = injectedProvider(walletId);
 
@@ -355,7 +358,7 @@ const connectWallet = async ({ walletId }) => {
       throw new Error(`${walletId} provider not found`);
     }
 
-    const provider = new providers.Web3Provider(injected);
+    const provider = new providers.Web3Provider(injected as providers.ExternalProvider);
     await injected.request({ method: 'eth_requestAccounts' });
 
     return {
@@ -369,7 +372,7 @@ const connectWallet = async ({ walletId }) => {
   }
 };
 
-const getBalance = async ({ provider, address }) => {
+const getBalance = async ({ provider, address }: { provider: providers.Web3Provider, address: string }) => {
   try {
     const balance = (await provider.getBalance(address)).toString();
     return {

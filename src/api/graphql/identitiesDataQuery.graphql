@@ -1,0 +1,14 @@
+query GetIdentities($name: String!) {
+  identities(first: 10, filter: { 
+    or: [{ name: { includesInsensitive: $name } }, 
+      { id: { includesInsensitive: $name } }
+    ] 
+  }) 
+  {
+    nodes {
+      id
+      name
+      isConfirmed
+    }
+  }
+}

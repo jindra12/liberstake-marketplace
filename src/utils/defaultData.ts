@@ -1,4 +1,30 @@
-export const newCompanyDataObject = {
+export const newCompanyDataObject: {
+  staticFields: {
+    display?: string;
+    key: string;
+    description?: string;
+    type: string;
+    encryptable: boolean;
+    name: string
+  }[],
+  dynamicFields: {
+    display?: string;
+    key: string;
+    name: string
+    fields: {
+      key: string;
+      name: string;
+      type: string;
+      encryptable: boolean;
+      display?: string;
+    }[];
+    data: {
+      key: string;
+      display: string;
+      isEncrypted: boolean;
+    }[][];
+  }[]
+} = {
   staticFields: [
     {
       key: 'name',

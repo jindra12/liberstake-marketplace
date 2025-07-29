@@ -55,7 +55,6 @@ export default function ETHLPStaking() {
       <EthereumSelectorWallet />
       <EthereumSelectorAddress
         selectedWallet={selectedWallet}
-        selectedAccount={selectedAccount}
         form={form}
       />
       <Divider />
