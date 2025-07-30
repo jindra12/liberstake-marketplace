@@ -1,21 +1,23 @@
 // FIXME refactor/deduplicate with offices after https://github.com/liberland/liberland_frontend/pull/69/files is merged
-import { hexToString } from '@polkadot/util';
+import { Data } from '@polkadot/types';
+import { IdentityInfo, IdentityInfoAdditional, IdentityJudgement } from '@polkadot/types/interfaces';
+import { BN, hexToString } from '@polkadot/util';
 
-export function parseIdentityData(d) {
+export function parseIdentityData(d: Data) {
   if (!d) return undefined;
   if (d.isNone) return undefined;
   if (!d.isRaw) return undefined;
   return new TextDecoder('utf-8').decode(d.asRaw);
 }
 
-export function parseEligibleOn(eligible_on) {
+export function parseEligibleOn(eligible_on: Data) {
   const bytes = new Uint8Array(eligible_on.asRaw); // little-endian
   bytes.reverse(); // big-endian
   const hex = Buffer.from(bytes).toString('hex');
   return parseInt(hex, 16);
 }
 
-export function parseLegal(info) {
+export function parseLegal(info: IdentityInfo) {
   if (!info) return undefined;
   if (!info.additional) return undefined;
 
@@ -30,35 +32,33 @@ export function parseLegal(info) {
   return parts.join('');
 }
 
-export function parseAdditionalFlag(additional, flag) {
+export function parseAdditionalFlag(additional: IdentityInfoAdditional[], flag: string) {
   if (!additional) return false;
 
   let citizen = additional.find(([key, _]) => key.eq(flag));
   if (!citizen) return false;
-  [, citizen] = citizen;
-  if (!citizen.isRaw) return false;
+  if (!citizen[1].isRaw) return false;
   return citizen.eq('1');
 }
 
-export function parseCitizenshipJudgement(judgements) {
+export function parseCitizenshipJudgement(judgements: [BN, IdentityJudgement][]) {
   if (!judgements) return false;
 
   return judgements.some((judgement) => (
-    judgement[0].eq(0)
+    judgement[0].isZero()
         && judgement[1].isKnownGood
   ));
 }
 
-export function parseDOB(additional, currentBlockNumber) {
+export function parseDOB(additional: IdentityInfoAdditional[], currentBlockNumber: number) {
   if (!additional) return undefined;
 
   // FIXME refactor with offices
   let eligible_on = additional.find(([key, _]) => key.eq('eligible_on'));
   if (!eligible_on) return undefined;
-  [, eligible_on] = eligible_on;
-  if (!eligible_on.isRaw) return undefined;
+  if (!eligible_on[1].isRaw) return undefined;
   const now = new Date(); // FIXME we should get a time at which blockNumber was actually fetched
-  const eligibleOnBlockNumber = parseEligibleOn(eligible_on);
+  const eligibleOnBlockNumber = parseEligibleOn(eligible_on[1]);
   // eslint-disable-next-line eqeqeq
   if (eligibleOnBlockNumber == 0) return false; // was eligible before blockchain started
 
@@ -68,29 +68,29 @@ export function parseDOB(additional, currentBlockNumber) {
   return birthDate.toISOString().slice(0, 10);
 }
 
-function parseKey(info, data, key) {
+function parseKey(info: IdentityInfo, data: [string, string][], key: string) {
   if (!data || !info?.additional) return undefined;
   const parts = data
     .filter(([keyRaw, _]) => keyRaw === key)
     .map(([_, v]) => v)
     .filter((x) => x !== undefined);
-  if (parts.length === 0) return parseIdentityData(info[key]);
+  if (parts.length === 0) return parseIdentityData((info as any as Record<string, Data>)[key] as Data);
 
   return parts.join('');
 }
 
-export function parseInfo(info, data, keys) {
-  const parsedData = {};
+export function parseInfo(info: IdentityInfo, data: [string, string][], keys: string[]) {
+  const parsedData: Record<string, string> = {};
 
   keys.forEach((key) => {
-    parsedData[key] = parseKey(info, data, key);
+    parsedData[key] = parseKey(info, data, key)!;
   });
 
   return parsedData;
 }
 
-const decode = (data, params) => {
-  const decodedData = [];
+const decode = (data: IdentityInfoAdditional[], params: string[]) => {
+  const decodedData: [string, string][] = [];
   data.forEach((item) => {
     if (!item[0].isRaw) {
       return;
@@ -104,7 +104,7 @@ const decode = (data, params) => {
   return decodedData;
 };
 
-export function decodeAndFilter(info, params) {
+export function decodeAndFilter(info: IdentityInfo, params: string[]) {
   if (!info) return undefined;
   if (!info.additional) return undefined;
   const decoded = decode(info.additional, params);

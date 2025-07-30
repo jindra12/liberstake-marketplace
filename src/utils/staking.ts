@@ -1,3 +1,4 @@
+import { ApiPromise } from '@polkadot/api';
 import {
   extractTime, bnMin, BN_MAX_INTEGER, BN,
   BN_ZERO, BN_ONE,
@@ -5,14 +6,16 @@ import {
   BN_HUNDRED,
   arrayFlatten,
 } from '@polkadot/util';
+import type { DeriveStakingAccount, DeriveSessionProgress, DeriveStakingElected, DeriveStakingQuery } from '@polkadot/api-derive/types';
+import { Exposure } from '@polkadot/types/interfaces';
 
-export const eraToDays = (era) => Math.round(era.toNumber() / 4);
-export const blockTime = (blocks) => {
+export const eraToDays = (era: BN) => Math.round(era.toNumber() / 4);
+export const blockTime = (blocks: BN) => {
   const value = bnMin(BN_MAX_INTEGER, new BN(6000).mul(blocks)).toNumber();
   return extractTime(Math.abs(value));
 };
 
-export const blockTimeFormatted = (blocks) => {
+export const blockTimeFormatted = (blocks: BN) => {
   const {
     days,
     hours,
@@ -27,7 +30,7 @@ export const blockTimeFormatted = (blocks) => {
   return formattedTime === '  ' ? '< Min' : formattedTime;
 };
 
-export const stakingInfoToProgress = (stakingInfo, progress) => {
+export const stakingInfoToProgress = (stakingInfo: DeriveStakingAccount, progress: DeriveSessionProgress) => {
   if (!stakingInfo?.unlocking || stakingInfo.unlocking?.length === 0) return null;
   const isStalled = progress.eraProgress.gt(BN_ZERO) && progress.eraProgress.gt(progress.eraLength);
 
@@ -81,7 +84,7 @@ const DEFAULT_PARAMS = {
   idealStake: 0.75,
 };
 
-export function calcInflation(totalIssuance, totalStaked) {
+export function calcInflation(totalIssuance: BN, totalStaked: BN) {
   const {
     falloff, maxInflation, minInflation, idealStake,
   } = DEFAULT_PARAMS;
@@ -107,22 +110,22 @@ export function calcInflation(totalIssuance, totalStaked) {
   };
 }
 
-const extractSingle = (derive, api) => {
-  const emptyExposure = api.createType('Exposure');
+const extractSingle = (derive: DeriveStakingElected, api: ApiPromise) => {
+  const emptyExposure = api.createType('Exposure') as any as Exposure;
   return derive.info.map((item) => {
     const {
       accountId, exposure = emptyExposure, stakingLedger, validatorPrefs,
-    } = item;
+    } = item as DeriveStakingQuery & { exposure?: Exposure };
     const [bondOwn, bondTotal] = exposure.total
       ? [exposure.own.unwrap(), exposure.total.unwrap()]
       : [BN_ZERO, BN_ZERO];
-    const skipRewards = bondTotal.isZero();
+    const skipRewards = (bondTotal as BN).isZero();
     const key = accountId.toString();
     const dataSkipRewars = stakingLedger.total?.unwrap() || BN_ZERO;
     return {
       key,
       accountId,
-      bondOther: bondTotal.sub(bondOwn),
+      bondOther: (bondTotal as BN).sub(bondOwn as BN),
       bondOwn: skipRewards ? dataSkipRewars : bondOwn,
       bondTotal: skipRewards ? dataSkipRewars : bondTotal,
       isActive: !skipRewards,
@@ -135,7 +138,7 @@ const extractSingle = (derive, api) => {
   });
 };
 
-export function getBaseInfo(api, elected, waitingInfo) {
+export function getBaseInfo(api: ApiPromise, elected: DeriveStakingElected, waitingInfo: DeriveStakingElected) {
   const baseInfo = extractSingle(elected, api);
   const waiting = extractSingle(waitingInfo, api);
   const activeTotals = baseInfo
@@ -151,7 +154,7 @@ export function getBaseInfo(api, elected, waitingInfo) {
   };
 }
 
-export function addReturns(inflation, baseInfo) {
+export function addReturns(inflation: ReturnType<typeof calcInflation>, baseInfo: ReturnType<typeof getBaseInfo>) {
   const { avgStaked } = baseInfo;
   const { validators } = baseInfo;
 
@@ -172,6 +175,6 @@ export function addReturns(inflation, baseInfo) {
   return { ...baseInfo, validators: list };
 }
 
-export function areArraysSame(arr1, arr2) {
+export const areArraysSame = <T>(arr1: T[], arr2: T[]) => {
   return arr1.slice().sort().toString() === arr2.slice().sort().toString();
 }

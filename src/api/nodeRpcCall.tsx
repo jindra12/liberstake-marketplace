@@ -1,9 +1,9 @@
 import { web3FromAddress } from '@polkadot/extension-dapp';
 import pako from 'pako';
-import type { Bytes, Option } from '@polkadot/types';
+import type { Bytes, Data, Option, Struct } from '@polkadot/types';
 import { ApiTypes, QueryableStorageMultiArg, SubmittableExtrinsic } from '@polkadot/api/types';
 import type { Codec } from '@polkadot/types/types';
-import { AssetBalance, AccountInfo, AssetDetails, Registration, Hash } from "@polkadot/types/interfaces";
+import { AssetBalance, AccountInfo, AssetDetails, Registration, Hash, Balance, AccountId, ValidatorPrefs, Nominations } from "@polkadot/types/interfaces";
 import {
   BN,
   BN_ZERO,
@@ -22,6 +22,7 @@ import { addReturns, calcInflation, getBaseInfo } from '../utils/staking';
 import identityJudgementEnums from '../constants/identityJudgementEnums';
 import { IndexHelper } from '../utils/council/councilEnum';
 import { decodeAndFilter } from '../utils/identityParser';
+import { DeriveStakingElected, DeriveStakingQuery } from '@polkadot/api-derive/types';
 
 const provider = new WsProvider(process.env['REACT_APP_NODE_ADDRESS']);
 let __apiCache: ApiPromise | null = null;
@@ -443,7 +444,7 @@ const getAssetDetails = async (ids: string[]) => {
   }
 };
 
-type CompanyValue = Option<Codec & { data?: Bytes }> & { data?: Bytes };
+type CompanyValue = Option<Codec & { data?: Bytes }> & { data?: Bytes, editableByRegistrar?: boolean };
 
 const convertCompanyValue = (api: ApiPromise, id: string, companyValue: CompanyValue) => {
   let companyData;
@@ -632,105 +633,14 @@ const provideJudgementAndAssets = async ({
     calls.push(officeLlmCall);
   }
 
-  const finalCall = api.tx.utility.batchAll(calls);
+  const finalCall = api.tx['utility']!['batchAll']!(calls);
   return submitExtrinsic(finalCall, walletAddress, api);
 };
 
-const getAdditionals = (itemData, key) => {
-  const chunks = [];
-  for (let i = 0; i < itemData.length; i += 32) {
-    chunks.push([
-      { Raw: key },
-      { Raw: itemData.substr(i, 32) },
-    ]);
-  }
-  return chunks;
-};
-
-const getCitizenAdditionals = (blockNumber, eligible_on_date) => {
-  if (!eligible_on_date) return [];
-
-  const now = Date.now();
-  const seconds_till_eligible = eligible_on_date.getTime() - now;
-  const blocks_till_eligible = seconds_till_eligible / 6000;
-  let eligible_on_bn = blockNumber + blocks_till_eligible;
-  eligible_on_bn = eligible_on_bn > 0 ? eligible_on_bn : 0;
-  eligible_on_bn = Math.ceil(eligible_on_bn);
-  const eligible_on_buf = new ArrayBuffer(4);
-  new DataView(eligible_on_buf).setUint32(0, eligible_on_bn, true);
-  const eligible_on_bytes = new Uint8Array(eligible_on_buf);
-
-  return [
-    [{ Raw: 'citizen' }, { Raw: '1' }],
-    [{ Raw: 'eligible_on' }, { Raw: [...eligible_on_bytes] }],
-  ];
-};
-
-const getEResidentAdditionals = () => [
-  [{ Raw: 'eresident' }, { Raw: '1' }],
-];
-
-const getCompanyAdditionals = () => [
-  [{ Raw: 'company' }, { Raw: '1' }],
-];
-
-const buildAdditionals = (values, blockNumber) => {
-  const additionals = [];
-
-  if (values.onChainIdentity === 'citizen') {
-    additionals.push(
-      ...getCitizenAdditionals(blockNumber, values.eligible_on),
-      ...getEResidentAdditionals(),
-    );
-  } else if (values.onChainIdentity === 'eresident') {
-    additionals.push(
-      ...getEResidentAdditionals(),
-    );
-  } else if (values.onChainIdentity === 'company') {
-    additionals.push(
-      ...getCompanyAdditionals(),
-    );
-  }
-
-  const additionalItems = ['legal', 'web', 'display', 'email'];
-
-  additionalItems.map((item) => {
-    const itemData = values[item];
-    if (itemData && itemData.length > 32) {
-      additionals.push(
-        ...getAdditionals(itemData, item),
-      );
-    }
-    return null;
-  });
-
-  return additionals;
-};
-
-const setIdentity = async (values, walletAddress) => {
-  const asData = (v) => (v ? { Raw: v } : null);
-  const truncate = (v) => (v?.length > 32 ? v.substring(0, 32) : v);
-  const api = await getApi();
-  const blockNumber = await api.derive.chain.bestNumber();
-  const info = {
-    additional: buildAdditionals(values, blockNumber.toNumber()),
-    display: asData(truncate(values.display)),
-    legal: asData(truncate(values.legal)),
-    web: asData(truncate(values.web)),
-    email: asData(truncate(values.email)),
-    riot: asData(null),
-    image: asData(null),
-    twitter: asData(null),
-  };
-
-  const setCall = api.tx.identity.setIdentity(info);
-  return submitExtrinsic(setCall, walletAddress, api);
-};
-
-const getCompanyRequest = async (entity_id) => {
+const getCompanyRequest = async (entity_id: string) => {
   try {
     const api = await getApi();
-    const maybeRequest = await api.query.companyRegistry.requests(0, entity_id);
+    const maybeRequest = (await api.query['companyRegistry']!['requests']!(0, entity_id)) as any as Option<Option<CompanyValue>>;
     if (maybeRequest.isNone) return null;
     const optRequest = maybeRequest.unwrap();
     if (optRequest.isNone) {
@@ -740,9 +650,9 @@ const getCompanyRequest = async (entity_id) => {
     }
     const request = optRequest.unwrap();
     return {
-      hash: request.data.hash,
+      hash: request.data!.hash,
       editableByRegistrar: request.editableByRegistrar,
-      data: api.createType('CompanyData', pako.inflate(request.data)),
+      data: api.createType('CompanyData', pako.inflate(request.data!)),
     };
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -751,16 +661,16 @@ const getCompanyRequest = async (entity_id) => {
   }
 };
 
-const getCompanyRegistration = async (entity_id) => {
+const getCompanyRegistration = async (entity_id: string) => {
   try {
     const api = await getApi();
-    const maybeRegistration = await api.query.companyRegistry.registries(0, entity_id);
+    const maybeRegistration = (await api.query['companyRegistry']!['registries']!(0, entity_id)) as any as Option<CompanyValue>;
     if (maybeRegistration.isNone) return null;
     const registration = maybeRegistration.unwrap();
     return {
-      hash: registration.data.hash,
+      hash: registration.data!.hash,
       editableByRegistrar: registration.editableByRegistrar,
-      data: api.createType('CompanyData', pako.inflate(registration.data)),
+      data: api.createType('CompanyData', pako.inflate(registration.data!)),
     };
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -769,15 +679,24 @@ const getCompanyRegistration = async (entity_id) => {
   }
 };
 
-const registerCompany = async ({ entity_id, hash, walletAddress }) => {
+const registerCompany = async (
+  {
+    entity_id,
+    hash,
+    walletAddress
+  }: {
+    entity_id: string;
+    hash: string;
+    walletAddress: string;
+  }
+) => {
   const api = await getApi();
-  const registerCall = api.tx.companyRegistry.registerEntity(0, entity_id, hash);
-  const proxied = api.tx.companyRegistryOffice.execute(registerCall);
+  const registerCall = api.tx['companyRegistry']!['registerEntity']!(0, entity_id, hash);
+  const proxied = api.tx['companyRegistryOffice']!['execute']!(registerCall);
   return submitExtrinsic(proxied, walletAddress, api);
 };
 
-// TODO: Need refactor when blockchain node update
-const getBalanceByAddress = async (address) => {
+const getBalanceByAddress = async (address: string) => {
   try {
     const api = await getApi();
     const [
@@ -785,16 +704,16 @@ const getBalanceByAddress = async (address) => {
       LLMData,
       LLMPolitiPool,
       electionLock,
-    ] = await api.queryMulti([
-      [api.query.system.account, address],
-      [api.query.assets.account, [1, address]],
-      [api.query.llm.llmPolitics, address],
-      [api.query.llm.electionlock, address],
-    ]);
+    ] = (await api.queryMulti([
+      [api.query['system']!['account']!, address],
+      [api.query['assets']!['account']!, [1, address]],
+      [api.query['llm']!['llmPolitics']!, address],
+      [api.query['llm']!['electionlock']!, address],
+    ]));
     const derivedLLDBalances = await api.derive.balances.all(address);
-    const LLMPolitiPoolData = LLMPolitiPool.toJSON();
-    const LLDWalletData = LLDData.toJSON();
-    const LLMWalletData = LLMData.toJSON();
+    const LLMPolitiPoolData = LLMPolitiPool!.toJSON() as any as AccountInfo;
+    const LLDWalletData = LLDData!.toJSON() as any as AccountInfo & { data: { frozen: Balance } };
+    const LLMWalletData = LLMData!.toJSON() as any as AssetBalance;
 
     const LLMBalance = LLMWalletData?.balance ?? '0x0';
     return {
@@ -816,7 +735,7 @@ const getBalanceByAddress = async (address) => {
       meritsTotalAmount: {
         amount: LLMBalance,
       },
-      electionLock: electionLock.toJSON(),
+      electionLock: electionLock!.toJSON(),
     };
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -825,51 +744,57 @@ const getBalanceByAddress = async (address) => {
   }
 };
 
-const sendTransfer = async (recipient, amount, walletAddress) => {
+const sendTransfer = async (recipient: string, amount: string, walletAddress: string) => {
   const api = await getApi();
-  const transferExtrinsic = api.tx.balances.transfer(recipient, amount);
+  const transferExtrinsic = api.tx['balances']!['transfer']!(recipient, amount);
   return submitExtrinsic(transferExtrinsic, walletAddress, api);
 };
 
-const sendAssetTransfer = async (recipient, amount, walletAddress, assetData) => {
+const sendAssetTransfer = async (recipient: string, amount: string, walletAddress: string, assetData: { index: string }) => {
   const api = await getApi();
-  const transferExtrinsic = api.tx.assets.transfer(parseInt(assetData.index), recipient, amount);
+  const transferExtrinsic = api.tx['assets']!['transfer']!(parseInt(assetData.index), recipient, amount);
   return submitExtrinsic(transferExtrinsic, walletAddress, api);
 };
 
-const sendTransferLLM = async (recipient, amount, userWalletAddress) => {
+const sendTransferLLM = async (recipient: string, amount: string, userWalletAddress: string) => {
   const api = await getApi();
-  const transferExtrinsic = api.tx.llm.sendLlm(recipient, amount);
+  const transferExtrinsic = api.tx['llm']!['sendLlm']!(recipient, amount);
   return submitExtrinsic(transferExtrinsic, userWalletAddress, api);
 };
 
-const stakeToPolkaBondAndExtra = async (amount, isUserHavePolkaStake, walletAddress) => {
+const stakeToPolkaBondAndExtra = async (amount: string, isUserHavePolkaStake: boolean, walletAddress: string) => {
   const api = await getApi();
   const transferExtrinsic = isUserHavePolkaStake
-    ? api.tx.staking.bondExtra(amount)
-    : api.tx.staking.bond(amount, 'Staked');
+    ? api.tx['staking']!['bondExtra']!(amount)
+    : api.tx['staking']!['bond']!(amount, 'Staked');
   return submitExtrinsic(transferExtrinsic, walletAddress, api);
 };
 
-const unpool = async (walletAddress) => {
+const unpool = async (walletAddress: string) => {
   const api = await getApi();
-  const unpoolExtrinsic = api.tx.llm.politicsUnlock();
+  const unpoolExtrinsic = api.tx['llm']!['politicsUnlock']!();
   return submitExtrinsic(unpoolExtrinsic, walletAddress, api);
 };
 
-const politiPool = async (amount, walletAddress) => {
+const politiPool = async (amount: string, walletAddress: string) => {
   const api = await getApi();
-  const politiPoolExtrinsic = api.tx.llm.politicsLock(amount);
+  const politiPoolExtrinsic = api.tx['llm']!['politicsLock']!(amount);
   return submitExtrinsic(politiPoolExtrinsic, walletAddress, api);
 };
 
-const getUserRoleRpc = async (walletAddress) => {
+interface UserIdentity {
+  info: {
+    additional: { Raw: string }[][];
+  }
+}
+
+const getUserRoleRpc = async (walletAddress: string) => {
   try {
     const api = await getApi();
-    const identityResult = await api.query.identity.identityOf(walletAddress);
-    const userRoleObject = identityResult?.toHuman()?.info.additional[0];
-    if (userRoleObject && (USER_ROLES.includes(userRoleObject[0]?.Raw) && userRoleObject[1]?.Raw === '1')) {
-      return userRolesHelper.assignJsIdentity(userRoleObject[0].Raw);
+    const identityResult = await api.query['identity']!['identityOf']!(walletAddress);
+    const userRoleObject = (identityResult?.toHuman() as any as UserIdentity)?.info.additional[0];
+    if (userRoleObject && (USER_ROLES.includes(userRoleObject[0]?.Raw || "") && userRoleObject[1]?.Raw === '1')) {
+      return userRolesHelper.assignJsIdentity(userRoleObject[0]?.Raw || "");
     }
     return { non_citizen: 'non_citizen' };
   } catch (e) {
@@ -879,7 +804,7 @@ const getUserRoleRpc = async (walletAddress) => {
   return null;
 };
 
-const subscribeBestBlockNumber = async (onNewBlockNumber) => {
+const subscribeBestBlockNumber = async (onNewBlockNumber: (newBlock: number) => void) => {
   try {
     const api = await getApi();
     const unsub = await api.derive.chain.bestNumber((bestNumber) => onNewBlockNumber(bestNumber.toNumber()));
@@ -891,63 +816,71 @@ const subscribeBestBlockNumber = async (onNewBlockNumber) => {
   return null;
 };
 
-function accountsToString(accounts) {
+function accountsToString(accounts: (AccountId | string)[]) {
   return accounts.map((account) => account.toString());
 }
 
-const getValidator = async (address) => {
+const getValidator = async (address: string) => {
   const api = await getApi();
-  return api.query.staking.validators(address);
+  return api.query['staking']!['validators']!(address);
 };
+
+export interface Validator extends DeriveStakingQuery {
+  isWaiting: boolean;
+}
 
 const getValidators = async () => {
   const api = await getApi();
-  const validators = [];
-  const validatorQueries = [];
-  const validatorIdentityQueries = [];
+  const validators: Validator[] = [];
+  const validatorQueries: QueryableStorageMultiArg<"promise">[] = [];
+  const validatorIdentityQueries: QueryableStorageMultiArg<"promise">[] = [];
 
-  const [elected, waiting, validatorsKeys] = await Promise.all([
-    api.derive.staking.electedInfo({
-      withController: true, withExposure: true, withPrefs: true, withLedger: true,
-    }),
-    api.derive.staking.waitingInfo({ withController: true, withPrefs: true, withLedger: true }),
-    api.query.staking.validators.keys(),
-  ]);
+  const [elected, waiting, validatorsKeys] = (
+    await Promise.all([
+      api.derive.staking.electedInfo({
+        withController: true, withExposure: true, withPrefs: true, withLedger: true,
+      }),
+      api.derive.staking.waitingInfo({ withController: true, withPrefs: true, withLedger: true }),
+      api.query['staking']!['validators']!.keys(),
+    ])
+  ) as any as [DeriveStakingElected, DeriveStakingElected, string[]];
 
-  const totalIssuance = await api.query.balances?.totalIssuance();
+  const totalIssuance = await api.query['balances']?.['totalIssuance']!() as any as BN;
   const baseInfo = getBaseInfo(api, elected, waiting);
   const inflation = calcInflation(totalIssuance, baseInfo?.totalStaked);
 
-  baseInfo.validators.forEach(async ({ key }) => {
-    validatorQueries.push([api.query.staking.validators, key]);
-    validatorIdentityQueries.push([api.query.identity.identityOf, key]);
+  baseInfo.validators.forEach(({ key }) => {
+    validatorQueries.push([api.query['staking']!['validators']!, key]);
+    validatorIdentityQueries.push([api.query['identity']!['identityOf']!, key]);
   });
   const numOfValidators = validatorsKeys.length;
-  const validatorsData = await api.queryMulti([
+  const validatorsData = (await api.queryMulti([
     ...validatorQueries,
     ...validatorIdentityQueries,
-  ]);
+  ])) as any as (Option<Registration> | Option<ValidatorPrefs>)[];
 
   const validatorsWithBaseInfo = inflation?.stakedReturn ? addReturns(inflation, baseInfo) : baseInfo;
 
   validatorsData.forEach((validatorData, index) => {
-    const validatorHumanData = validatorData.toHuman();
+    const validatorHumanData = validatorData.toHuman() as Record<keyof ValidatorPrefs, string>;
     const data = validatorData.isSome ? validatorData.unwrap() : null;
-    const decodedData = decodeAndFilter(data?.info, ['display']);
+    const decodedData = decodeAndFilter((data as Registration)?.info, ['display']);
     const validatorWithBaseInfo = validatorsWithBaseInfo.validators[index];
-    if (!validatorWithBaseInfo) return;
+    if (!validatorWithBaseInfo) {
+      return;
+    }
     const dataToAdd = {
       ...((validatorHumanData?.commission !== undefined) && { commission: validatorHumanData.commission }),
       ...((validatorHumanData?.blocked !== undefined) && { blocked: validatorHumanData.blocked }),
       // eslint-disable-next-line max-len
-      ...((decodedData?.display !== undefined) && { displayName: decodedData.display }),
+      ...((decodedData?.['display'] !== undefined) && { displayName: decodedData['display'] }),
       ...validatorWithBaseInfo,
       isWaiting: accountsToString(baseInfo.waitingIds).includes(validatorWithBaseInfo.key),
     };
     validators[index % numOfValidators] = {
       ...validators[index % numOfValidators],
       ...dataToAdd,
-    };
+    } as any as Validator;
   });
 
   validators.sort((a, b) => {
@@ -958,93 +891,160 @@ const getValidators = async () => {
   return validators;
 };
 
-const getNominatorTargets = async (walletId) => {
+const getNominatorTargets = async (walletId: string) => {
   const api = await getApi();
-  const nominations = await api.query.staking.nominators(walletId);
-
-  return nominations?.toHuman()?.targets ? nominations?.toHuman()?.targets : [];
+  const nominations = await api.query['staking']!['nominators']!(walletId) as any as Option<Nominations>;
+  const human = nominations?.toHuman() as any as Nominations;
+  return human?.targets || [];
 };
 
-const setNominatorTargets = async (payload) => {
+const setNominatorTargets = async (payload: {
+  newNominatorTargets: string[];
+  walletAddress: string;
+}) => {
   const { newNominatorTargets, walletAddress } = payload;
   const api = await getApi();
-  const setNewTargets = api.tx.staking.nominate(newNominatorTargets);
+  const setNewTargets = api.tx['staking']!['nominate']!(newNominatorTargets);
   return submitExtrinsic(setNewTargets, walletAddress, api);
 };
 
-async function getIdentityDataProper(addressesIdentityData) {
-  const api = await getApi();
-  if (addressesIdentityData.length === 0) return [];
-  const identityQueries = addressesIdentityData.map((address) => [api.query.identity.identityOf, address]);
-  const identities = await api.queryMulti(identityQueries);
-  return addressesIdentityData.map((address, index) => {
-    const identity = identities[index];
-
-    const isIdentity = identity.isSome;
-
-    const addressString = address.toString();
-    let nameData;
-    let legalData;
-    let websiteData;
-    if (isIdentity) {
-      const identityData = identity.unwrap();
-      const { info } = identityData;
-      const decodedData = decodeAndFilter(info, ['display', 'web', 'legal']);
-      nameData = decodedData?.display;
-      legalData = decodedData?.legal;
-      websiteData = decodedData?.web;
-    }
-    return {
-      name: nameData,
-      legal: legalData,
-      website: websiteData,
-      identityData: identity.isSome ? identity.unwrap().toJSON() : null,
-      rawIdentity: addressString,
-    };
-  });
+export interface Encryptable {
+  value: string;
+  isEncrypted: boolean;
 }
 
-const getOfficialUserRegistryEntries = async (walletAddress) => {
+export interface BrandName {
+  name: Encryptable;
+}
+
+export interface Contact {
+  contact: Encryptable;
+}
+
+export interface OnlineAddress {
+  description: Encryptable;
+  url: Encryptable;
+}
+
+export interface PhysicalAddress {
+  description: Encryptable;
+  street: Encryptable;
+  city: Encryptable;
+  subdivision: Encryptable;
+  postalCode: Encryptable;
+  country: Encryptable;
+}
+
+export interface Person {
+  walletAddress: Encryptable;
+  name: Encryptable;
+  dob: Encryptable;
+  passportNumber: Encryptable;
+}
+
+export interface Principal {
+  walletAddress: Encryptable;
+  name: Encryptable;
+  dob: Encryptable;
+  passportNumber: Encryptable;
+  signingAbility: Encryptable;
+  signingAbilityConditions: Encryptable;
+  shares: Encryptable;
+}
+
+export interface Shareholder {
+  walletAddress: Encryptable;
+  name: Encryptable;
+  dob: Encryptable;
+  passportNumber: Text;
+  shares: Encryptable;
+}
+
+export interface UBO {
+  walletAddress: Encryptable;
+  name: Encryptable;
+  dob: Encryptable;
+  passportNumber: Encryptable;
+  signingAbility: Encryptable;
+  signingAbilityConditions: Encryptable;
+}
+
+export interface RelevantAsset {
+  assetId: Encryptable;
+}
+
+export interface RelevantContract {
+  contractId: Encryptable;
+}
+
+export interface CompanyData {
+  name: string;
+  purpose: string;
+  logoURL: string;
+  charterURL: string;
+  totalCapitalAmount: string;
+  totalCapitalCurrency: string;
+  numberOfShares: string;
+  valuePerShare: string;
+  history: string;
+  brandNames: BrandName[];
+  onlineAddresses: OnlineAddress[];
+  physicalAddresses: PhysicalAddress[];
+  statutoryOrganMembers: Person[];
+  principals: Principal[];
+  shareholders: Shareholder[];
+  UBOs: UBO[];
+  relevantAssets: RelevantAsset[];
+  relevantContracts: RelevantContract[];
+  companyType: string;
+  contact: Contact;
+}
+
+export type EncodedCompany = Codec & { data: Data, editableByRegistrar: boolean };
+
+const getOfficialUserRegistryEntries = async (walletAddress: string) => {
   const api = await getApi();
-  const ownerEntites = await api.query.companyRegistry.ownerEntities.entries(walletAddress);
+  const ownerEntites = await api.query['companyRegistry']!['ownerEntities']!.entries(walletAddress);
 
   const ownerEntitesHuman = ownerEntites.map((x) => ({
-    key: x[0].toHuman(), value: x[1].toHuman(),
+    key: x[0].toHuman() as string[], value: x[1].toHuman(),
   }));
-  const ownsEntityIds = [];
+  const ownsEntityIds: string[] = [];
   ownerEntitesHuman.forEach((oe) => {
-    ownsEntityIds.push(oe.key[1]);
+    ownsEntityIds.push(oe.key[1]!);
   });
-  const requestQueries = [];
-  const registeredQueries = [];
+  const requestQueries: QueryableStorageMultiArg<"promise">[] = [];
+  const registeredQueries: QueryableStorageMultiArg<"promise">[] = [];
   ownsEntityIds.forEach((entityId) => {
-    requestQueries.push([api.query.companyRegistry.requests, [0, entityId]]);
-    registeredQueries.push([api.query.companyRegistry.registries, [0, entityId]]);
+    requestQueries.push([api.query['companyRegistry']!['requests']!, [0, entityId]]);
+    registeredQueries.push([api.query['companyRegistry']!['registries']!, [0, entityId]]);
   });
-  let companyRegistryRawData = [];
+  let companyRegistryRawData: Option<Option<Codec & { data: Data }>>[] = [];
   // Skip queryMulti if no companies, otherwise errors out
   if (ownsEntityIds.length !== 0) {
     companyRegistryRawData = await api.queryMulti([
       ...requestQueries,
       ...registeredQueries,
-    ]);
+    ]) as any as Option<Option<Codec & { data: Data }>>[];
   }
-  const companyRequestsByWallet = [];
-  const registeredCompaniesByWallet = [];
+  const companyRequestsByWallet: BlockchainData[] = [];
+  const registeredCompaniesByWallet: BlockchainData[] = [];
   companyRegistryRawData.forEach((companyRegistryEntity, index) => {
     if (companyRegistryEntity.isNone) return;
-    let companyData;
+    let companyData: Struct | { unregister: true, set?: () => void };
     try {
       if (companyRegistryEntity.isNone) return;
       const optCompanyRegistryEntity = companyRegistryEntity.unwrap();
-      if (optCompanyRegistryEntity.isNone) companyData = { unregister: true };
+      if (optCompanyRegistryEntity.isNone) {
+        companyData = { unregister: true };
+      }
       else {
         // eslint-disable-next-line max-len
-        const optCompanyRegistryEntityUnwrap = optCompanyRegistryEntity?.isSome ? optCompanyRegistryEntity.unwrap() : optCompanyRegistryEntity;
+        const optCompanyRegistryEntityUnwrap = (optCompanyRegistryEntity?.isSome ? optCompanyRegistryEntity.unwrap() : optCompanyRegistryEntity) as EncodedCompany;
         const compressed = optCompanyRegistryEntityUnwrap.data;
-        companyData = api.createType('CompanyData', pako.inflate(compressed));
+        companyData = api.createType('CompanyData', pako.inflate(compressed as any)) as any as Struct;
 
-        companyData.set('registryAllowedToEdit', optCompanyRegistryEntityUnwrap.editableByRegistrar);
+        companyData.set('registryAllowedToEdit', optCompanyRegistryEntityUnwrap.editableByRegistrar as any as Codec);
       }
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -1060,7 +1060,7 @@ const getOfficialUserRegistryEntries = async (walletAddress) => {
     }
 
     // FIXME this is component-specific logic, nodeRpcCall shouldn't do this
-    const formObject = blockchainDataToFormObject(companyData);
+    const formObject = blockchainDataToFormObject(companyData as any as Record<string, string>);
 
     if (index < ownsEntityIds.length) {
       const dataObject = { ...formObject, id: ownsEntityIds[index] };
@@ -1071,73 +1071,20 @@ const getOfficialUserRegistryEntries = async (walletAddress) => {
     }
   });
 
-  // const METAVERSTE_NFTs_ID = 1;
-  // const LAND_NFTs_ID = 0;
-
-  const metaverseLandForOwner = [];
-  const landForOwner = [];
-
-  // const ownerLand = await Promise.all([
-  //   api.query.nfts.account.entries(walletAddress, LAND_NFTs_ID),
-  //   api.query.nfts.account.entries(walletAddress, METAVERSTE_NFTs_ID),
-  // ]);
-
-  const landForOwnerIds = [];
-  const landMetadataQueries = [];
-  const metaverseLandForOwnerIds = [];
-  const metaverseLandMetadataQueries = [];
-  // const ownerLandHuman = ownerLand[0].map((x) => {
-  //   const landObject = { ...x[0].toHuman() };
-  //   landForOwnerIds.push(landObject[2]);
-  //   landMetadataQueries.push([api.query.nfts.itemMetadataOf, [LAND_NFTs_ID, parseInt(landObject[2])]]);
-  //   return landObject;
-  // });
-  // const ownerMetaverseLandHuman = ownerLand[1].map((x) => {
-  //   const metaverseLandObject = { ...x[0].toHuman() };
-  //   metaverseLandForOwnerIds.push(metaverseLandObject[2]);
-  // eslint-disable-next-line max-len
-  //   metaverseLandMetadataQueries.push([api.query.nfts.itemMetadataOf, [METAVERSTE_NFTs_ID, parseInt(metaverseLandObject[2])]]);
-  //   return metaverseLandObject;
-  // });
-
-  let landAttributes = [];
-  // only query if something to query, otherwise never resolves
-  if (landMetadataQueries.length !== 0 || metaverseLandMetadataQueries.length !== 0) {
-    landAttributes = await api.queryMulti([
-      ...landMetadataQueries,
-      ...metaverseLandMetadataQueries,
-    ]);
-  }
-
-  landAttributes.forEach((landAttribute, index) => {
-    if (index < landForOwnerIds.length) {
-      landForOwner.push({ id: landForOwnerIds[index], data: landAttribute.toHuman() });
-    } else {
-      const id = metaverseLandForOwnerIds[index - landForOwnerIds.length];
-      metaverseLandForOwner.push({ id, data: landAttribute.toHuman() });
-    }
-  });
-
   return {
     companies: {
       registered: registeredCompaniesByWallet,
       requested: companyRequestsByWallet,
     },
-    land: {
-      physical: landForOwner,
-      metaverse: metaverseLandForOwner,
-    },
-    assets: [],
-    other: [],
   };
 };
 
-const requestCompanyRegistration = async (companyData, registryAllowedToEdit, walletAddress) => {
+const requestCompanyRegistration = async (companyData: BlockchainData, registryAllowedToEdit: boolean, walletAddress: string) => {
   const api = await getApi();
 
   const data = api.createType('CompanyData', companyData);
   const compressed = pako.deflate(data.toU8a());
-  const extrinsic = api.tx.companyRegistry.requestEntity(0, u8aToHex(compressed), !!registryAllowedToEdit);
+  const extrinsic = api.tx['companyRegistry']!['requestEntity']!(0, u8aToHex(compressed), !!registryAllowedToEdit);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 

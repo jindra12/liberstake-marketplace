@@ -28,7 +28,7 @@ interface DynamicBlockchainData {
 }
 
 export interface BlockchainData {
-  [key: string | 'staticFields' | 'dynamicFields']: string | (DynamicBlockchainData | string)[][];
+  [key: string | 'staticFields' | 'dynamicFields']: undefined | boolean | string | (DynamicBlockchainData | string)[][];
 }
 
 export interface CrossReferencedFieldDataArray {
