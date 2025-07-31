@@ -15,12 +15,6 @@ function* clearErrorsWorker(action) {
   yield put(blockchainActions.setError.success(''));
 }
 
-function* fetchPreimageWorker({ payload: { hash, len } }) {
-  const preimage = yield call(fetchPreimage, hash, len);
-  yield put(blockchainActions.fetchPreimage.success({
-    hash, preimage,
-  }));
-}
 
 // WATCHERS
 
@@ -53,10 +47,6 @@ export function* subscribeActiveEraSaga() {
     const activeEra = yield take(channel);
     yield put(blockchainActions.activeEra.value(activeEra));
   }
-}
-
-export function* fetchPreimageWatcher() {
-  yield* blockchainWatcherEvery(blockchainActions.fetchPreimage, fetchPreimageWorker);
 }
 
 export function* subscribeWalletsSaga() {

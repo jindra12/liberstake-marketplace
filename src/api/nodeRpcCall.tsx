@@ -1,9 +1,32 @@
 import { web3FromAddress } from '@polkadot/extension-dapp';
 import pako from 'pako';
-import type { Bytes, Data, Option, Struct } from '@polkadot/types';
+import type { Bytes, Compact, Data, Option, StorageKey, Struct } from '@polkadot/types';
 import { ApiTypes, QueryableStorageMultiArg, SubmittableExtrinsic } from '@polkadot/api/types';
 import type { Codec } from '@polkadot/types/types';
-import { AssetBalance, AccountInfo, AssetDetails, Registration, Hash, Balance, AccountId, ValidatorPrefs, Nominations } from "@polkadot/types/interfaces";
+import {
+  AssetBalance,
+  AccountInfo,
+  AssetDetails,
+  Registration,
+  Hash,
+  Balance,
+  AccountId,
+  ValidatorPrefs,
+  Nominations,
+  StakingLedger,
+  EraIndex,
+  AccountId32,
+  UnappliedSlash,
+  RewardDestination,
+  Keys,
+  Perbill,
+  SlashingSpans,
+  AssetId,
+  TAssetBalance
+} from "@polkadot/types/interfaces";
+import type { Bool } from '@polkadot/types';
+import { DeriveStakerReward, DeriveStakerRewardValidator, DeriveStakingElected, DeriveStakingQuery } from '@polkadot/api-derive/types';
+import type { TAssetConversion } from '@polkadot/types/interfaces/assetConversion';
 import {
   BN,
   BN_ZERO,
@@ -22,7 +45,6 @@ import { addReturns, calcInflation, getBaseInfo } from '../utils/staking';
 import identityJudgementEnums from '../constants/identityJudgementEnums';
 import { IndexHelper } from '../utils/council/councilEnum';
 import { decodeAndFilter } from '../utils/identityParser';
-import { DeriveStakingElected, DeriveStakingQuery } from '@polkadot/api-derive/types';
 
 const provider = new WsProvider(process.env['REACT_APP_NODE_ADDRESS']);
 let __apiCache: ApiPromise | null = null;
@@ -242,10 +264,10 @@ const submitExtrinsic = async <T extends ApiTypes>(extrinsic: SubmittableExtrins
           } else resolve({ blockHash, status, events });
         }
       }) as Promise<any>).catch((err: unknown) => {
-      // eslint-disable-next-line no-console
-      console.log(err);
-      reject(err);
-    });
+        // eslint-disable-next-line no-console
+        console.log(err);
+        reject(err);
+      });
   });
 };
 
@@ -1088,13 +1110,13 @@ const requestCompanyRegistration = async (companyData: BlockchainData, registryA
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const requestEditCompanyRegistration = async (companyData, companyId, walletAddress, registryAllowedToEdit) => {
+const requestEditCompanyRegistration = async (companyData: BlockchainData, companyId: string, walletAddress: string, registryAllowedToEdit: boolean) => {
   const api = await getApi();
 
   const data = api.createType('CompanyData', companyData);
   const compressed = pako.deflate(data.toU8a());
 
-  const extrinsic = api.tx.companyRegistry.requestRegistration(
+  const extrinsic = api.tx['companyRegistry']!['requestRegistration']!(
     0,
     companyId,
     u8aToHex(compressed),
@@ -1103,41 +1125,41 @@ const requestEditCompanyRegistration = async (companyData, companyId, walletAddr
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const batchPayoutStakers = async (targets, walletAddress) => {
+const batchPayoutStakers = async (targets: { validator: AccountId, era: BN }[], walletAddress: string) => {
   const api = await getApi();
-  const calls = targets.map(({ validator, era }) => api.tx.staking.payoutStakers(validator, era));
-  const extrinsic = api.tx.utility.batch(calls);
+  const calls = targets.map(({ validator, era }) => api.tx['staking']!['payoutStakers']!(validator, era));
+  const extrinsic = api.tx['utility']!['batch']!(calls);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const getStakersRewards = async (accounts) => {
+const getStakersRewards = async (accounts: (AccountId | string)[]) => {
   const api = await getApi();
 
-  const allRewards = await api.derive.staking.stakerRewardsMulti(accounts, false);
+  const allRewards = (await api.derive.staking.stakerRewardsMulti(accounts, false)) as any as DeriveStakerReward[][];
 
   // allRewards may include rewards from validators that no longer have a stash.
   // Such rewards are unclaimable and essentially lost either way, so let's just
   // filter them out.
 
   // First find all validators that our stakers got rewards from
-  const uniqValidatorsSet = new Set(allRewards.flatten().map(({ validators }) => Object.keys(validators)).flatten());
+  const uniqValidatorsSet = new Set(allRewards.flat().map(({ validators }) => Object.keys(validators)).flat());
   const uniqValidators = Array.from(uniqValidatorsSet);
 
   // Validators are stashes, convert to controllers
-  const controllers = await api.query.staking.bonded.multi(uniqValidators);
-  const controllersWithIdx = controllers.map((v, i) => [i, v]);
+  const controllers = await api.query['staking']!['bonded']!.multi(uniqValidators) as any as Option<Codec>[];
+  const controllersWithIdx = controllers.map((v, i) => [i, v] as const);
 
   // If there's no controller attached, it's not a stash
-  const noStashValidators = controllersWithIdx.filter(([, v]) => v.isNone).map(([i]) => uniqValidators[i]);
+  const noStashValidators = controllersWithIdx.filter(([, v]) => v!.isNone).map(([i]) => uniqValidators[i]);
 
   // Fetch ledgers for validators with controller
-  const stashValidators = controllersWithIdx.filter(([, v]) => v.isSome).map(([i, v]) => [i, v.unwrap()]);
-  const ledgers = await api.query.staking.ledger.multi(stashValidators.map(([, v]) => v));
+  const stashValidators = controllersWithIdx.filter(([, v]) => v.isSome).map(([i, v]) => [i, v.unwrap()] as const);
+  const ledgers = (await api.query['staking']!['ledger']!.multi(stashValidators.map(([, v]) => v))) as any as Option<Codec>[];
 
   // If there's no ledger, it's not a stash anymore
-  const noControllerValidators = ledgers.reduce((broken, v, i) => {
+  const noControllerValidators = ledgers.reduce((broken: string[], v: Option<Codec>, i) => {
     if (v.isNone) {
-      return [...broken, uniqValidators[stashValidators[i][0]]];
+      return [...broken, uniqValidators[stashValidators[i]![0]]!];
     }
     return broken;
   }, []);
@@ -1148,7 +1170,7 @@ const getStakersRewards = async (accounts) => {
   const validRewards = allRewards.map((accountRewards) => accountRewards.map((eraRewards) => {
     const goodValidators = Object.keys(eraRewards.validators)
       .filter((v) => !brokenValidators.includes(v))
-      .reduce((obj, v) => ({ ...obj, [v]: eraRewards.validators[v] }), {});
+      .reduce((obj: Record<string, DeriveStakerRewardValidator>, v) => ({ ...obj, [v]: eraRewards.validators[v]! }), {});
     return {
       ...eraRewards,
       validators: goodValidators,
@@ -1159,80 +1181,80 @@ const getStakersRewards = async (accounts) => {
 
 const getSessionValidators = async () => {
   const api = await getApi();
-  const rawData = await api.query.session.validators();
+  const rawData = (await api.query['session']!['validators']!()) as any as Codec[];
   return rawData.map((v) => v.toString());
 };
 
 const getNextSessionValidators = async () => {
   const api = await getApi();
-  const data = await api.query.session.queuedKeys();
-  return data.map(([validator]) => validator.toString());
+  const data = await api.query['session']!['queuedKeys']!() as any as Codec[][];
+  return data.map(([validator]) => validator!.toString());
 };
 
 const getStakingValidators = async () => {
   const api = await getApi();
-  const rawData = await api.query.staking.validators.keys();
-  return rawData.map((v) => v.args[0].toString());
+  const rawData = await api.query['staking']!['validators']!.keys();
+  return rawData.map((v) => v.args[0]!.toString());
 };
 
 const getNominators = async () => {
   const api = await getApi();
-  return api.query.staking.nominators.entries();
+  return (await api.query['validators']!['nominators']!.entries()) as any as [string, Option<StakingLedger>][];
 };
 
-const getStakingLedger = async (controller) => {
+const getStakingLedger = async (controller: string) => {
   const api = await getApi();
-  return api.query.staking.ledger(controller);
+  return (await api.query['staking']!['ledger']!(controller)) as any as Option<StakingLedger>;
 };
 
 const getAppliedSlashes = async () => {
   const api = await getApi();
 
   return {
-    validator: await api.query.staking.validatorSlashInEra.entries(),
-    nominator: await api.query.staking.nominatorSlashInEra.entries(),
+    validator: (await api.query['staking']!['validatorSlashInEra']!.entries()) as any as [StorageKey<[EraIndex, AccountId32]>, Balance][],
+    nominator: (await api.query['staking']!['nominatorSlashInEra']!.entries()) as any as [StorageKey<[EraIndex, AccountId32]>, Balance][],
   };
 };
 
 const getUnappliedSlashes = async () => {
   const api = await getApi();
-  return api.query.staking.unappliedSlashes.entries();
+  return (await api.query['staking']!['unappliedSlashes']!.entries()) as any as [StorageKey<[EraIndex]>, UnappliedSlash[]][];
 };
 
-const setSessionKeys = async (keys, walletAddress) => {
+const setSessionKeys = async (keys: string[], walletAddress: string) => {
   const api = await getApi();
   const EMPTY_PROOF = new Uint8Array();
-  const extrinsic = api.tx.session.setKeys(keys, EMPTY_PROOF);
+  const extrinsic = api.tx['session']!['setKeys']!(keys, EMPTY_PROOF);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const getStakingPayee = async (stash) => {
+const getStakingPayee = async (stash: AccountId | string) => {
   const api = await getApi();
 
-  return api.query.staking.payee(stash);
+  return (await api.query['staking']!['payee']!(stash)) as any as RewardDestination;
 };
 
-const setStakingPayee = async (destination, walletAddress) => {
+const setStakingPayee = async (destination: RewardDestination, walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.staking.setPayee(destination);
+  const extrinsic = api.tx['staking']!['setPayee']!(destination);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const getIdentities = async (addresses) => {
+const getIdentities = async (addresses: string[]) => {
   const api = await getApi();
-  const raw = await api.query.identity.identityOf.multi(addresses);
+  const raw = (await api.query['identity']!['identityOf']!.multi(addresses)) as any as Option<Registration>[];
   return raw.map((identity, idx) => ({
     address: addresses[idx],
     identity: identity.isSome ? identity.unwrap().info : null,
   }));
 };
 
-const getIdentitiesNames = async (addresses) => {
+const getIdentitiesNames = async (addresses: string[]) => {
   const api = await getApi();
-  const raw = await api.query.identity.identityOf.multi(addresses);
-  const identities = {};
+  const raw = (await api.query['identity']!['identityOf']!.multi(addresses)) as any as Option<Registration>[];
+  const identities: Record<string, { identity: { name?: string, legal?: string } }> = {};
   raw.map((identity, idx) => {
-    identities[addresses[idx]] = {};
+    identities[addresses[idx]!] = { identity: {} };
     const unwrapIdentity = identity.isSome ? identity.unwrap().info : null;
 
     let nameData;
@@ -1240,79 +1262,79 @@ const getIdentitiesNames = async (addresses) => {
 
     if (unwrapIdentity) {
       const decodedData = decodeAndFilter(unwrapIdentity, ['display', 'legal']);
-      nameData = decodedData?.display;
-      legalData = decodedData?.legal;
+      nameData = decodedData?.['display'];
+      legalData = decodedData?.['legal'];
     }
-    identities[addresses[idx]].identity = { name: nameData, legal: legalData };
+    identities[addresses[idx]!]!.identity = { name: nameData!, legal: legalData! };
 
     return null;
   });
   return identities;
 };
 
-const stakingChill = async (walletAddress) => {
+const stakingChill = async (walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.staking.chill();
+  const extrinsic = api.tx['staking']!['chill']!();
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const stakingValidate = async (commission, blocked, keys, walletAddress) => {
+const stakingValidate = async (commission: Compact<Perbill>, blocked: boolean, keys: Keys, walletAddress: string) => {
   const api = await getApi();
   const EMPTY_PROOF = new Uint8Array();
-  const setKeys = api.tx.session.setKeys(keys, EMPTY_PROOF);
-  const validate = api.tx.staking.validate({ commission, blocked });
-  const extrinsic = api.tx.utility.batchAll([setKeys, validate]);
+  const setKeys = api.tx['session']!['setKeys']!(keys, EMPTY_PROOF);
+  const validate = api.tx['staking']!['validate']!({ commission, blocked });
+  const extrinsic = api.tx['utility']!['batchAll']!([setKeys, validate]);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const updateValidate = async (commission, blocked, walletAddress) => {
+const updateValidate = async (commission: Compact<Perbill>, blocked: boolean, walletAddress: string) => {
   const api = await getApi();
-  const validate = api.tx.staking.validate({ commission, blocked });
+  const validate = api.tx['staking']!['validate']!({ commission, blocked });
   return submitExtrinsic(validate, walletAddress, api);
 };
 
-const bondAndValidate = async (bondValue, payee, commission, blocked, keys, walletAddress) => {
+const bondAndValidate = async (bondValue: Compact<Balance> | number | string | BN, payee: RewardDestination, commission: Compact<Perbill>, blocked: boolean, keys: Keys, walletAddress: string) => {
   const api = await getApi();
-  const bond = api.tx.staking.bond(bondValue, payee);
+  const bond = api.tx['staking']!['bond']!(bondValue, payee);
   const EMPTY_PROOF = new Uint8Array();
-  const setKeys = api.tx.session.setKeys(keys, EMPTY_PROOF);
-  const validate = api.tx.staking.validate({ commission, blocked });
-  const extrinsic = api.tx.utility.batchAll([bond, setKeys, validate]);
+  const setKeys = api.tx['session']!['setKeys']!(keys, EMPTY_PROOF);
+  const validate = api.tx['staking']!['validate']!({ commission, blocked });
+  const extrinsic = api.tx['utility']!['batchAll']!([bond, setKeys, validate]);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const stakingBond = async (value, walletAddress) => {
+const stakingBond = async (value: BN | string | number, walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.staking.bond(value, 'Staked');
+  const extrinsic = api.tx['staking']!['bond']!(value, 'Staked');
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const stakingBondExtra = async (value, walletAddress) => {
+const stakingBondExtra = async (value: BN | string | number, walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.staking.bondExtra(value);
+  const extrinsic = api.tx['staking']!['bondExtra']!(value);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const stakingUnbond = async (value, walletAddress) => {
+const stakingUnbond = async (value: BN | string | number, walletAddress: string) => {
   const api = await getApi();
-  return submitExtrinsic(api.tx.staking.unbond(value), walletAddress, api);
+  return submitExtrinsic(api.tx['staking']!['unbond']!(value), walletAddress, api);
 };
 
-const stakingWithdrawUnbonded = async (walletAddress) => {
+const stakingWithdrawUnbonded = async (walletAddress: string) => {
   const api = await getApi();
-  const ledger = await api.query.staking.ledger(walletAddress);
+  const ledger = (await api.query['staking']!['ledger']!(walletAddress)) as any as Option<StakingLedger>;
   if (ledger.isNone) throw new Error("Account isn't a stash controller!");
 
-  const spans = await api.query.staking.slashingSpans(ledger.unwrap().stash);
+  const spans = (await api.query['staking']!['slashingSpans']!(ledger.unwrap().stash)) as any as Option<SlashingSpans>;
   const spanCount = spans.isSome ? spans.unwrap().prior.length + 1 : 0;
 
-  return submitExtrinsic(api.tx.staking.withdrawUnbonded(spanCount), walletAddress, api);
+  return submitExtrinsic(api.tx['staking']!['withdrawUnbonded']!(spanCount), walletAddress, api);
 };
 
-const subscribeActiveEra = async (onNewEra) => {
+const subscribeActiveEra = async (onNewEra: (activeEraOpt: Option<EraIndex>) => void) => {
   try {
     const api = await getApi();
-    const unsub = await api.query.staking.activeEra(onNewEra);
+    const unsub = await api.query['staking']!['activeEra']!(onNewEra);
     return unsub;
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -1323,103 +1345,68 @@ const subscribeActiveEra = async (onNewEra) => {
 
 const getStakingBondingDuration = async () => {
   const api = await getApi();
-  return api.consts.staking.bondingDuration;
+  return api.consts['staking']!['bondingDuration'] as any as BN;
 };
 
-const fetchPreimageLen = async (hash) => {
-  const api = await getApi();
-  const keys = await api.query.preimage.preimageFor.keys();
-  const key = keys.find((keyElement) => keyElement.args[0][0].eq(hash));
-  return key?.args[0][1];
-};
-
-const fetchPreimage = async (hash, len) => {
-  const api = await getApi();
-  const length = len || await fetchPreimageLen(hash);
-  return api.query.preimage.preimageFor([hash, length]);
-};
-
-const decodeCall = async (bytes) => {
-  const api = await getApi();
-  return api.createType('Call', bytes);
-};
-
-const getPreImage = async (preimageId, len) => {
-  const api = await getApi();
-  const preimageRaw = await api.query.preimage.preimageFor([preimageId, len]);
-  const preimage = preimageRaw.isSome ? api.createType('Call', preimageRaw.unwrap()) : null;
-  return preimage;
-};
-
-const requestUnregisterCompanyRegistration = async (companyId, walletAddress) => {
+const requestUnregisterCompanyRegistration = async (companyId: string, walletAddress: string) => {
   const api = await getApi();
 
-  const extrinsic = api.tx.companyRegistry.requestEntityUnregister(0, companyId);
+  const extrinsic = api.tx['companyRegistry']!['requestEntityUnregister']!(0, companyId);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const unregisterCompany = async (companyId, isSoft, walletAddress) => {
+const unregisterCompany = async (companyId: string, isSoft: boolean, walletAddress: string) => {
   const api = await getApi();
 
-  const extrinsic = api.tx.companyRegistryOffice.execute(
-    api.tx.companyRegistry.unregister(0, companyId, isSoft),
+  const extrinsic = api.tx['companyRegistryOffice']!['execute']!(
+    api.tx['companyRegistry']!['unregister']!(0, companyId, isSoft),
   );
 
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const cancelCompanyRequest = async (companyId, walletAddress) => {
+const cancelCompanyRequest = async (companyId: string, walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.companyRegistry.cancelRequest(0, companyId);
+  const extrinsic = api.tx['companyRegistry']!['cancelRequest']!(0, companyId);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const setRegisteredCompanyData = async (companyId, companyData, walletAddress) => {
+const setRegisteredCompanyData = async (companyId: string, companyData: BlockchainData, walletAddress: string) => {
   const api = await getApi();
   const data = api.createType('CompanyData', companyData);
   const compressed = pako.deflate(data.toU8a());
-  const setRegisteredEntity = api.tx.companyRegistry.setRegisteredEntity(0, companyId, u8aToHex(compressed));
-  const extrinsic = api.tx.companyRegistryOffice.execute(setRegisteredEntity);
+  const setRegisteredEntity = api.tx['companyRegistry']!['setRegisteredEntity']!(0, companyId, u8aToHex(compressed));
+  const extrinsic = api.tx['companyRegistryOffice']!['execute']!(setRegisteredEntity);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const fetchPendingIdentities = async () => {
-  const api = await getApi();
-  const raw = await api.query.identity.identityOf.entries();
-  const processed = raw.map((rawEntry) => ({
-    address: rawEntry[0].toHuman()[0],
-    data: rawEntry[1].toJSON(),
-  }));
-  return processed.filter((entity) => entity.data.judgements.length === 0);
-};
-
-const getSwapPriceExactTokensForTokens = async (asset1, asset2, amount, includeTax = true) => {
+const getSwapPriceExactTokensForTokens = async (asset1: string, asset2: string, amount: BN, includeTax = true) => {
   const api = await getApi();
 
-  const maybeRate = await api.call.assetConversionApi.quotePriceExactTokensForTokens(
+  const maybeRate = (await api.call['assetConversionApi']!['quotePriceExactTokensForTokens']!(
     asset1,
     asset2,
     amount,
     includeTax,
-  );
+  )) as Option<Balance>;
   return maybeRate.unwrapOr(null);
 };
 
-const getSwapPriceTokensForExactTokens = async (asset1, asset2, amount, includeTax = true) => {
+const getSwapPriceTokensForExactTokens = async (asset1: string, asset2: string, amount: BN, includeTax = true) => {
   const api = await getApi();
 
-  const maybeRate = await api.call.assetConversionApi.quotePriceTokensForExactTokens(
+  const maybeRate = (await api.call['assetConversionApi']!['quotePriceTokensForExactTokens']!(
     asset1,
     asset2,
     amount,
     includeTax,
-  );
+  )) as Option<Balance>;
   return maybeRate.unwrapOr(null);
 };
 
-const getDexReserves = async (asset1, asset2) => {
+const getDexReserves = async (asset1: string | { value: Codec }, asset2: string | { value: Codec }) => {
   const api = await getApi();
-  const maybeReserves = await api.call.assetConversionApi.getReserves(asset1, asset2);
+  const maybeReserves = await api.call['assetConversionApi']!['getReserves']!(asset1, asset2) as Option<Codec & [Balance, Balance]>;
   if (maybeReserves.isNone) {
     return null;
   }
@@ -1432,37 +1419,39 @@ const getDexReserves = async (asset1, asset2) => {
 
 const getAssetsDataFromPool = async () => {
   const api = await getApi();
-  const maybeAssetDataFromPool = await api.query.poolAssets.asset.entries();
-  const data = {};
+  const maybeAssetDataFromPool = (await api.query['poolAssets']!['asset']!.entries()) as any as [StorageKey<[AssetId]>, Option<AssetDetails>][];
+  const data: Record<string, { supply: TAssetBalance | undefined }> = {};
   maybeAssetDataFromPool.map((item) => {
-    const asset = item[0].toHuman()[0];
-    const { supply } = item[1].unwrapOr(null);
+    const asset = (item[0].toHuman() as [string])[0];
+    const { supply } = item[1].unwrapOr(null) || {};
     data[asset] = { supply };
     return { supply, asset };
   });
   return data;
 };
 
-const getLpTokensOwnedByAddress = async (lpTokenId, address) => {
+const getLpTokensOwnedByAddress = async (lpTokenId: BN | string | number, address: string) => {
   const api = await getApi();
-  const maybeTokens = await api.query.poolAssets.account(lpTokenId, address);
+  const maybeTokens = (await api.query['poolAssets']!['account']!(lpTokenId, address)) as any as Option<AssetBalance>;
 
   if (maybeTokens.isNone) {
     return null;
   }
-  const tokens = maybeTokens.unwrapOrDefault();
+  const tokens = maybeTokens.unwrapOrDefault() || {};
   const { balance } = tokens;
   return { balance };
 };
 
-const getDexPools = async (walletAddress) => {
+const getDexPools = async (walletAddress: string) => {
   try {
     const api = await getApi();
-    const pools = await api.query.assetConversion.pools.entries();
+    const pools = (
+      await api.query['assetConversion']!['pools']!.entries()
+    ) as any as [StorageKey<[[{ value: Codec }, { value: Codec }] & Codec]>, Option<TAssetConversion>][];
     const assetsPoolData = await getAssetsDataFromPool();
     const poolsData = await Promise.all(pools.map(async ([poolKey, maybePoolData]) => {
       const [asset1, asset2] = poolKey.args[0];
-      const { lpToken } = maybePoolData.unwrapOrDefault();
+      const { lpToken } = (maybePoolData.unwrapOrDefault() as any as { lpToken: Codec }) || {};
       const asset1checkIsNative = asset1.value.toString();
       const asset2checkIsNative = asset2.value.toString();
       const asset2Transform = asset2checkIsNative || asset2.toString();
@@ -1493,7 +1482,7 @@ const getDexPools = async (walletAddress) => {
   }
 };
 
-const getDexPoolsExtendData = async (walletAddress) => {
+const getDexPoolsExtendData = async (walletAddress: string) => {
   try {
     const dexData = await getDexPools(walletAddress);
     return dexData;
@@ -1504,9 +1493,15 @@ const getDexPoolsExtendData = async (walletAddress) => {
   }
 };
 
-const swapExactTokensForTokens = async (path, amountIn, amountOutMin, sendTo, walletAddress) => {
+const swapExactTokensForTokens = async (
+  path: (string | { value: Codec })[],
+  amountIn: BN | number | string,
+  amountOutMin: BN | number | string,
+  sendTo: string,
+  walletAddress: string
+) => {
   const api = await getApi();
-  const extrinsic = api.tx.assetConversion.swapExactTokensForTokens(
+  const extrinsic = api.tx['assetConversion']!['swapExactTokensForTokens']!(
     path,
     amountIn,
     amountOutMin,
@@ -1516,30 +1511,36 @@ const swapExactTokensForTokens = async (path, amountIn, amountOutMin, sendTo, wa
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const createNewPool = async (aAsset, bAsset, walletAddress) => {
+const createNewPool = async (aAsset: string | { value: Codec }, bAsset: string | { value: Codec }, walletAddress: string) => {
   const api = await getApi();
-  const extrinsic = api.tx.assetConversion.createPool(aAsset, bAsset);
+  const extrinsic = api.tx['assetConversion']!['createPool']!(aAsset, bAsset);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
-const swapTokensForExactTokens = async (path, amountOut, amountInMax, sendTo, walletAddress) => {
+const swapTokensForExactTokens = async (
+  path: (string | { value: Codec })[],
+  amountOut: BN | number | string,
+  amountInMax: BN | number | string,
+  sendTo: string,
+  walletAddress: string
+) => {
   const api = await getApi();
-  const extrinsic = api.tx.assetConversion.swapTokensForExactTokens(path, amountOut, amountInMax, sendTo, true);
+  const extrinsic = api.tx['assetConversion']!['swapTokensForExactTokens']!(path, amountOut, amountInMax, sendTo, true);
   return submitExtrinsic(extrinsic, walletAddress, api);
 };
 
 const addLiquidity = async (
-  asset1,
-  asset2,
-  amount1Desired,
-  amount2Desired,
-  amount1Min,
-  amount2Min,
-  mintTo,
-  walletAddress,
+  asset1: string | { value: Codec },
+  asset2: string | { value: Codec },
+  amount1Desired: BN | number | string,
+  amount2Desired: BN | number | string,
+  amount1Min: BN | number | string,
+  amount2Min: BN | number | string,
+  mintTo: string,
+  walletAddress: string,
 ) => {
   const api = await getApi();
-  const extrinsic = api.tx.assetConversion.addLiquidity(
+  const extrinsic = api.tx['assetConversion']!['addLiquidity']!(
     asset1,
     asset2,
     amount1Desired,
@@ -1553,21 +1554,21 @@ const addLiquidity = async (
 
 const getLiquidityWithdrawalFee = async () => {
   const api = await getApi();
-  const maybeLiquidityWithdrawalFee = api.consts.assetConversion.liquidityWithdrawalFee;
+  const maybeLiquidityWithdrawalFee = api.consts['assetConversion']!['liquidityWithdrawalFee']!;
   return Number(maybeLiquidityWithdrawalFee);
 };
 
 const removeLiquidity = async (
-  asset1,
-  asset2,
-  lpTokenBurn,
-  amount1MinReceive,
-  amount2MinReceive,
-  withdrawTo,
-  walletAddress,
+  asset1: string | { value: Codec },
+  asset2: string | { value: Codec },
+  lpTokenBurn: string,
+  amount1MinReceive: BN | number | string,
+  amount2MinReceive: BN | number | string,
+  withdrawTo: string,
+  walletAddress: string,
 ) => {
   const api = await getApi();
-  const extrinsic = api.tx.assetConversion.removeLiquidity(
+  const extrinsic = api.tx['assetConversion']!['removeLiquidity']!(
     asset1,
     asset2,
     lpTokenBurn,
@@ -1580,17 +1581,17 @@ const removeLiquidity = async (
 
 const fetchCompanyRequests = async () => {
   const api = await getApi();
-  const raw = await api.query.companyRegistry.requests.entries();
+  const raw = await api.query['companyRegistry']!['requests']!.entries();
   return raw.map((rawEntry) => ({
-    indexes: rawEntry[0].toHuman(),
+    indexes: rawEntry[0].toHuman() as string,
   }));
 };
 
-const handleContractData = (data) => {
+const handleContractData = (data: Bytes) => {
   let result = null;
   if (!data) return result;
   try {
-    const hexData = data.toString('hex');
+    const hexData = (data as any).toString('hex');
     result = Buffer.from(pako.inflate(hexToU8a(hexData))).toString('utf-8');
   } catch (err) {
     result = Buffer.from(data).toString('utf-8');
@@ -1598,13 +1599,17 @@ const handleContractData = (data) => {
   return result;
 };
 
-const getSignaturesForContracts = async (contractId) => {
+const getSignaturesForContracts = async (contractId: string) => {
   const api = await getApi();
-  const judgesSignatures = await api.query.contractsRegistry.judgesSignatures.entries(contractId);
+  const judgesSignatures = (
+    await api.query['contractsRegistry']!['judgesSignatures']!.entries(contractId)
+  ) as any as [StorageKey<[Codec, Codec]>, Bool][];
   const judgesSignaturesList = judgesSignatures.map(
     ([key, isSigned]) => ({ key: key.args[1].toString(), isSigned: isSigned.isTrue }),
   );
-  const partiesSignatures = await api.query.contractsRegistry.partiesSignatures.entries(contractId);
+  const partiesSignatures = await (
+    api.query['contractsRegistry']!['partiesSignatures']!.entries(contractId)
+  ) as any as [StorageKey<[Codec, Codec]>, Bool][];
   const partiesSignaturesList = partiesSignatures.map(
     ([key, isSigned]) => ({ key: key.args[1].toString(), isSigned: isSigned.isTrue }),
   );
@@ -1614,9 +1619,9 @@ const getSignaturesForContracts = async (contractId) => {
   return { judgesSignaturesList: judgesFiltered, partiesSignaturesList: partiesFiltered };
 };
 
-const getSingleContract = async (contractId) => {
+const getSingleContract = async (contractId: string) => {
   const api = await getApi();
-  const contract = await api.query.contractsRegistry.contracts(contractId);
+  const contract = await api.query['contractsRegistry']!['contracts']!(contractId);
   const contractUnwrap = contract.unwrapOr(null);
   const data = handleContractData(contractUnwrap?.data);
   const parties = (contract?.parties && contract?.parties.length > 0)
@@ -1834,7 +1839,7 @@ const getAllNfts = async (walletAddress, onlyForSale) => {
       }
 
       const isUserNft = userCollectionIds.includes(collectionId.toString())
-                        && userNftIds.includes(nftId.toString());
+        && userNftIds.includes(nftId.toString());
 
       return {
         collectionId: collectionId.toString(),
@@ -1955,7 +1960,7 @@ async function bidNFT(collectionId, itemId, bidPrice, walletAddress) {
 
 async function transferNFT(collectionId, itemId, newOwner, walletAddress) {
   const api = await getApi();
-  const extrinsic = api.tx.nfts.transfer(collectionId, itemId, newOwner);
+  const extrinsic = api.tx['nfts']!['transfer']!(collectionId, itemId, newOwner);
   return submitExtrinsic(extrinsic, walletAddress, api);
 }
 
@@ -1977,7 +1982,6 @@ export {
   getCompanyRegistration,
   registerCompany,
   getOfficialUserRegistryEntries,
-  setIdentity,
   requestCompanyRegistration,
   unpool,
   getLlmBalances,
@@ -2005,18 +2009,14 @@ export {
   stakingWithdrawUnbonded,
   subscribeActiveEra,
   getStakingBondingDuration,
-  fetchPreimage,
-  decodeCall,
   requestEditCompanyRegistration,
   unregisterCompany,
   cancelCompanyRequest,
   setRegisteredCompanyData,
   requestUnregisterCompanyRegistration,
-  fetchPendingIdentities,
   fetchCompanyRequests,
   getIdentitiesNames,
   getOfficialRegistryEntries,
-  getDexPools,
   getDexPoolsExtendData,
   getDexReserves,
   getSwapPriceExactTokensForTokens,
@@ -2038,7 +2038,6 @@ export {
   createContract,
   getSignaturesForContracts,
   getStakingData,
-  getPreImage,
   encodeRemark,
   decodeRemark,
   getUserNfts,
